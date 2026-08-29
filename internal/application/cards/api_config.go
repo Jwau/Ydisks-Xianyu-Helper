@@ -31,6 +31,8 @@ type APIRequestTestResult struct {
 	ExtractedValue string `json:"extracted_value,omitempty"`
 	// ResponsePreview 是限长响应预览，便于用户诊断返回格式。
 	ResponsePreview string `json:"response_preview,omitempty"`
+	// RenderedPreview 是配置了发货文案模板时按测试数据渲染出的最终发送内容。
+	RenderedPreview string `json:"rendered_preview,omitempty"`
 }
 
 // APIRequestTester 定义卡密 API 测试请求的最小应用能力。
@@ -49,9 +51,11 @@ type apiConfigDocument struct {
 	ContentType  string         `json:"content_type"`
 	ResponsePath string         `json:"response_path,omitempty"`
 	RetryEnabled bool           `json:"retry_enabled,omitempty"`
+	// MessageTemplate 是可选的发货文案模板；{card_content} 会被替换为接口提取内容。
+	MessageTemplate string `json:"message_template,omitempty"`
 }
 
-// APIConfig 是自动发货适配器读取的规范化 API 请求配置；Headers 与 Params 只在服务端内部流转。
+// APIConfig 是自动发货适配器读取的规范化 API 请求配置；请求模板只在发货执行和所有者编辑回读路径使用。
 type APIConfig = apiConfigDocument
 
 // ParseAPIConfig 解析并校验完整 API 卡券配置，供自动化适配器读取已解密的专用配置。
@@ -80,12 +84,22 @@ func ParseAPIConfig(raw string) (APIConfig, error) {
 	return document, nil
 }
 
-// APIConfigSummary 是卡券查询接口允许返回的 API 配置脱敏摘要。
+// APIConfigSummary 是卡券查询接口返回的 API 配置摘要。
+// Headers、Params 和 Body 是所有者编辑弹窗回显所需的已保存请求模板；
+// 它们只在归属校验后的查询路径返回，供用户查看和修改自己的配置。
 type APIConfigSummary struct {
-	URL               string `json:"url"`
-	Method            string `json:"method"`
-	TimeoutSeconds    int    `json:"timeout_seconds"`
-	ContentType       string `json:"content_type"`
+	URL            string `json:"url"`
+	Method         string `json:"method"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	ContentType    string `json:"content_type"`
+	// Headers 是所有者编辑回显用的已保存请求头模板；未配置或解析失败时为空对象。
+	Headers map[string]any `json:"headers"`
+	// Params 是所有者编辑回显用的已保存查询参数模板；未配置或解析失败时为空对象。
+	Params map[string]any `json:"params"`
+	// Body 是所有者编辑回显用的已保存请求正文模板；未配置或解析失败时为空对象。
+	Body map[string]any `json:"body"`
+	// MessageTemplate 是可选的发货文案模板；空值表示直接发送接口提取内容。
+	MessageTemplate   string `json:"message_template,omitempty"`
 	ResponsePath      string `json:"response_path,omitempty"`
 	RetryEnabled      bool   `json:"retry_enabled"`
 	HeadersConfigured bool   `json:"headers_configured"`
@@ -94,10 +108,10 @@ type APIConfigSummary struct {
 	ValidationError   string `json:"validation_error,omitempty"`
 }
 
-// SummarizeAPIConfig 将完整配置转换为不含请求模板、密钥或响应正文的查询摘要。
+// SummarizeAPIConfig 将完整配置转换为包含请求模板回读的查询摘要。
 func SummarizeAPIConfig(raw string) APIConfigSummary {
-	// summary 保存不包含请求模板值的脱敏状态。
-	var summary APIConfigSummary
+	// summary 保存查询返回的配置状态；模板字段初始化为空对象，保证 JSON 输出不是 null。
+	summary := APIConfigSummary{Headers: map[string]any{}, Params: map[string]any{}, Body: map[string]any{}}
 	// normalized 保存兼容旧字段、补齐默认值后的规范化 JSON。
 	normalized, err := normalizeAPIConfig(raw, "")
 	if err != nil {
@@ -120,6 +134,8 @@ func SummarizeAPIConfig(raw string) APIConfigSummary {
 	summary.URL, summary.Method, summary.TimeoutSeconds = document.URL, document.Method, document.Timeout
 	summary.ResponsePath, summary.RetryEnabled = document.ResponsePath, document.RetryEnabled
 	summary.ContentType = document.ContentType
+	summary.Headers, summary.Params, summary.Body = document.Headers, document.Params, document.Body
+	summary.MessageTemplate = document.MessageTemplate
 	summary.HeadersConfigured, summary.ParamsConfigured = len(document.Headers) > 0, len(document.Params) > 0
 	// validationErr 保存摘要配置的非敏感校验错误。
 	if validationErr := validateAPIConfig(document); validationErr != nil {

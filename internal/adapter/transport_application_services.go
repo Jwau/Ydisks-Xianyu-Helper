@@ -9,6 +9,7 @@ import (
 	automationapp "xianyu-go/internal/application/automation"
 	cardsapp "xianyu-go/internal/application/cards"
 	defaultreplyapp "xianyu-go/internal/application/defaultreply"
+	itemsapp "xianyu-go/internal/application/items"
 	keywordsapp "xianyu-go/internal/application/keywords"
 	notificationsapp "xianyu-go/internal/application/notifications"
 	settingsapp "xianyu-go/internal/application/settings"
@@ -57,6 +58,10 @@ type TransportApplicationServices struct {
 	Cards *cardsapp.Service
 	// APICardTester 提供卡券 API 临时测试请求能力。
 	APICardTester cardsapp.APIRequestTester
+	// CardImages 提供图片卡密本地上传图片的保存与归属读取能力。
+	CardImages *CardImageService
+	// ItemMigration 提供商品跨账号迁移用例。
+	ItemMigration *itemsapp.ItemMigrationService
 	// PublishAutomationRules 提供发布后自动化规则准备流程。
 	PublishAutomationRules *automationapp.PublishRuleService
 	// DefaultReplies 提供默认回复配置与投递记录用例。
@@ -99,6 +104,8 @@ func NewTransportApplicationServices(options TransportApplicationServiceOptions)
 		AutomationRules:        automationapp.NewRuleService(automationRepository, automationRepository),
 		Cards:                  cardsapp.NewService(options.MiscDependencies.NewCardsRepository()),
 		APICardTester:          options.MiscDependencies.NewAPICardTester(slog.Default()),
+		CardImages:             options.MiscDependencies.NewCardImageService(),
+		ItemMigration:          itemsapp.NewItemMigrationService(options.MiscDependencies.NewItemMigrationRepository()),
 		PublishAutomationRules: automationapp.NewPublishRuleService(automationRepository),
 		DefaultReplies:         defaultreplyapp.NewService(options.AutomationDependencies.NewDefaultReplyRepository()),
 		Keywords:               keywordsapp.NewService(options.AutomationDependencies.NewKeywordRepository()),
@@ -115,7 +122,7 @@ func (services *TransportApplicationServices) Validate() error {
 	if services == nil {
 		return fmt.Errorf("transport 应用服务集合不能为空")
 	}
-	if services.Settings == nil || services.Admin == nil || services.AccountTasks == nil || services.UncertainNotifications == nil || services.NotificationChannels == nil || services.Analytics == nil || services.AutomationIssues == nil || services.AutomationRules == nil || services.Cards == nil || services.APICardTester == nil || services.PublishAutomationRules == nil || services.DefaultReplies == nil || services.Keywords == nil {
+	if services.Settings == nil || services.Admin == nil || services.AccountTasks == nil || services.UncertainNotifications == nil || services.NotificationChannels == nil || services.Analytics == nil || services.AutomationIssues == nil || services.AutomationRules == nil || services.Cards == nil || services.APICardTester == nil || services.CardImages == nil || services.ItemMigration == nil || services.PublishAutomationRules == nil || services.DefaultReplies == nil || services.Keywords == nil {
 		return fmt.Errorf("transport 应用服务集合存在未装配服务")
 	}
 	return nil

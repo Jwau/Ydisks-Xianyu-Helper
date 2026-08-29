@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"strings"
 )
 
-// CardAPIConfigSummary 是数据库向普通查询路径提供的 API 卡脱敏摘要。
+// CardAPIConfigSummary 是数据库向普通查询路径提供的 API 卡配置摘要。
+// Headers、Params 和 Body 是所有者编辑弹窗回显所需的已保存请求模板；
+// 它们只在归属校验后的查询路径返回，发货执行仍走 GetForDelivery 专用路径。
 type CardAPIConfigSummary struct {
 	// URL 是 API 端点地址，不包含请求模板内容。
 	URL string `json:"url"`
@@ -18,6 +21,14 @@ type CardAPIConfigSummary struct {
 	Method string `json:"method"`
 	// TimeoutSeconds 是请求超时时间，单位为秒。
 	TimeoutSeconds int `json:"timeout_seconds"`
+	// Headers 是所有者编辑回显用的请求头模板；未配置或解析失败时为空对象。
+	Headers map[string]any `json:"headers"`
+	// Params 是所有者编辑回显用的查询参数模板；未配置或解析失败时为空对象。
+	Params map[string]any `json:"params"`
+	// Body 是所有者编辑回显用的请求正文模板；未配置或解析失败时为空对象。
+	Body map[string]any `json:"body"`
+	// MessageTemplate 是可选的发货文案模板；空值表示直接发送接口提取内容。
+	MessageTemplate string `json:"message_template,omitempty"`
 	// ResponsePath 是响应提取路径。
 	ResponsePath string `json:"response_path,omitempty"`
 	// RetryEnabled 表示是否启用幂等重试。
@@ -37,9 +48,9 @@ func (c *Cards) GetForDelivery(ctx context.Context, cardID int64) (*CardFull, er
 	return c.Get(ctx, cardID)
 }
 
-// GetSummary 读取单个卡券的脱敏摘要，完整 API 模板不会离开数据库层。
+// GetSummary 读取单个卡券的所有者查询摘要；API 卡返回含请求模板的完整配置视图，原配置文本不离开数据库层。
 func (c *Cards) GetSummary(ctx context.Context, cardID int64) (*CardFull, error) {
-	// card 是内部完整读取后立即脱敏的卡券记录。
+	// card 是内部完整读取后立即转为摘要视图的卡券记录。
 	card, err := c.Get(ctx, cardID)
 	if err != nil {
 		return nil, err
@@ -51,9 +62,9 @@ func (c *Cards) GetSummary(ctx context.Context, cardID int64) (*CardFull, error)
 	return card, nil
 }
 
-// AllForUserSummary 读取用户卡券列表的脱敏摘要，避免把 API 模板带入应用层。
+// AllForUserSummary 读取用户卡券列表的摘要视图；API 卡返回含请求模板的完整配置视图，原配置文本不离开数据库层。
 func (c *Cards) AllForUserSummary(ctx context.Context, userID int64) ([]CardFull, error) {
-	// cards 是内部完整读取后逐条脱敏的卡券记录。
+	// cards 是内部完整读取后逐条转为摘要视图的卡券记录。
 	cards, err := c.AllForUser(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -68,14 +79,15 @@ func (c *Cards) AllForUserSummary(ctx context.Context, userID int64) ([]CardFull
 	return cards, nil
 }
 
-// summarizeCardAPIConfig 将已解密的 API 配置转换为不含敏感模板的摘要。
+// summarizeCardAPIConfig 将已解密的 API 配置转换为所有者查询视图；
+// 请求头、参数和正文模板原样回读供编辑使用，原始配置 JSON 不进入上层。
 func summarizeCardAPIConfig(cardType, raw string) *CardAPIConfigSummary {
 	if cardType != "api" {
 		return nil
 	}
-	// summary 是普通卡券查询使用的脱敏结果。
-	summary := &CardAPIConfigSummary{}
-	// fields 是只用于解析非敏感字段和模板是否存在的 JSON 对象。
+	// summary 是所有者查询使用的配置结果；模板字段初始化为空对象，保证 JSON 输出不是 null。
+	summary := &CardAPIConfigSummary{Headers: map[string]any{}, Params: map[string]any{}, Body: map[string]any{}}
+	// fields 是用于解析公开字段和请求模板的 JSON 对象。
 	var fields map[string]json.RawMessage
 	// err 表示 API 配置 JSON 解析错误。
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
@@ -88,21 +100,16 @@ func summarizeCardAPIConfig(cardType, raw string) *CardAPIConfigSummary {
 		summary.Method = "GET"
 	}
 	summary.TimeoutSeconds = parseSummaryTimeout(fields)
+	summary.Headers = apiConfigTemplate(fields["headers"])
+	summary.Params = apiConfigTemplate(fields["params"])
+	summary.Body = apiConfigTemplate(fields["body"])
+	summary.MessageTemplate = summaryRawString(fields["message_template"])
 	summary.ResponsePath = summaryRawString(fields["response_path"])
 	summary.RetryEnabled = strings.EqualFold(summaryRawString(fields["retry_enabled"]), "true")
 	summary.HeadersConfigured = templateConfigured(fields["headers"])
 	summary.ParamsConfigured = templateConfigured(fields["params"])
-	// templates 是只在本地校验幂等占位符的临时 JSON 值，不进入返回结构。
-	templates := make(map[string]any, 2)
-	// name 表示当前待读取的敏感模板字段名。
-	for _, name := range []string{"headers", "params"} {
-		// value 保存模板的临时 JSON 值，函数返回前不会写入摘要。
-		var value any
-		// err 表示模板字段解析错误；错误模板不影响公开字段读取。
-		if err := json.Unmarshal(fields[name], &value); err == nil {
-			templates[name] = value
-		}
-	}
+	// templates 是校验幂等占位符所需的请求头和参数模板，与摘要回显字段同源。
+	templates := map[string]any{"headers": summary.Headers, "params": summary.Params}
 	// err 表示摘要公开字段或重试约束校验错误。
 	if err := validateSummaryAPIConfig(*summary, templates); err != nil {
 		summary.ValidationError = err.Error()
@@ -110,6 +117,16 @@ func summarizeCardAPIConfig(cardType, raw string) *CardAPIConfigSummary {
 	}
 	summary.Ready = true
 	return summary
+}
+
+// apiConfigTemplate 将 API 模板字段解析为对象；空值、null 或非对象一律返回空对象。
+func apiConfigTemplate(raw json.RawMessage) map[string]any {
+	// value 保存模板字段的动态 JSON 对象。
+	var value map[string]any
+	if len(bytes.TrimSpace(raw)) == 0 || json.Unmarshal(raw, &value) != nil || value == nil {
+		return map[string]any{}
+	}
+	return value
 }
 
 // parseSummaryTimeout 兼容历史配置中的 timeout 字段并返回摘要超时。

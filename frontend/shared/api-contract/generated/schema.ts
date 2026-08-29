@@ -594,6 +594,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cards/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** postApiV1CardsImages */
+        post: operations["postApiV1CardsImages"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cards/images/{image_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** getApiV1CardsImagesByimage_id */
+        get: operations["getApiV1CardsImagesByimage_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cards/{card_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** postApiV1CardsBycard_idCopy */
+        post: operations["postApiV1CardsBycard_idCopy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cards/{card_id}/details": {
         parameters: {
             query?: never;
@@ -969,6 +1020,23 @@ export interface paths {
         put?: never;
         /** postApiV1ItemsGetByPage */
         post: operations["postApiV1ItemsGetByPage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** postApiV1ItemsMigrate */
+        post: operations["postApiV1ItemsMigrate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2237,6 +2305,7 @@ export interface components {
             name?: string;
             /** @enum {string} */
             type?: "api" | "text" | "data" | "image";
+            image_id?: number;
             api_config?: components["schemas"]["APICardConfigMutation"] | string;
             text_content?: string;
             data_content?: string;
@@ -2283,6 +2352,7 @@ export interface components {
             text_content: string;
             data_content: string;
             image_url: string;
+            image_id?: number;
             description: string;
             enabled: boolean;
             delay_seconds: number;
@@ -2318,6 +2388,7 @@ export interface components {
             params_action?: "retain" | "replace" | "clear";
             response_path?: string;
             retry_enabled?: boolean;
+            message_template?: string;
         };
         APICardConfigResponse: {
             url: string;
@@ -2325,12 +2396,40 @@ export interface components {
             method: "GET" | "POST";
             timeout_seconds: number;
             content_type: string;
+            headers: {
+                [key: string]: unknown;
+            };
+            params: {
+                [key: string]: unknown;
+            };
+            body: {
+                [key: string]: unknown;
+            };
             response_path?: string;
             retry_enabled: boolean;
             headers_configured: boolean;
             params_configured: boolean;
             ready: boolean;
             validation_error?: string;
+            message_template?: string;
+        };
+        ItemMigrationRequest: {
+            from_cookie_id: string;
+            to_cookie_id: string;
+            item_ids: string[];
+        };
+        ItemMigrationResponse: {
+            success: boolean;
+            migrated: number;
+            skipped: string[];
+            rules_moved: number;
+            keywords_moved: number;
+            replies_moved: number;
+        };
+        CardImageUploadResponse: {
+            success: boolean;
+            image_id: number;
+            filename: string;
         };
         CardAPITestRequest: {
             api_config: components["schemas"]["APICardConfigMutation"] | string;
@@ -2343,6 +2442,7 @@ export interface components {
             response_fields: string[];
             extracted_value?: string;
             response_preview?: string;
+            rendered_preview?: string;
         };
         ItemListResponse: {
             id: number;
@@ -6075,6 +6175,185 @@ export interface operations {
             };
         };
     };
+    postApiV1CardsImages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardImageUploadResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getApiV1CardsImagesByimage_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                image_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 图片字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description 统一错误响应 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postApiV1CardsBycard_idCopy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MutationIDResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getApiV1CardsBycard_idDetails: {
         parameters: {
             query?: never;
@@ -7995,6 +8274,66 @@ export interface operations {
             };
             /** @description 统一错误响应 */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postApiV1ItemsMigrate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemMigrationRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMigrationResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 统一错误响应 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

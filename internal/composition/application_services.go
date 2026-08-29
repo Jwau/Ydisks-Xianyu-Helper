@@ -23,6 +23,7 @@ import (
 	chatapp "xianyu-go/internal/application/chat"
 	defaultreplyapp "xianyu-go/internal/application/defaultreply"
 	itemapp "xianyu-go/internal/application/items"
+	itemsapp "xianyu-go/internal/application/items"
 	keywordsapp "xianyu-go/internal/application/keywords"
 	lifecycleapp "xianyu-go/internal/application/lifecycle"
 	notificationsapp "xianyu-go/internal/application/notifications"
@@ -116,6 +117,10 @@ type Services struct {
 	cards *cardsapp.Service
 	// apiCardTester 是卡券 API 测试请求端口。
 	apiCardTester cardsapp.APIRequestTester
+	// cardImages 是图片卡密本地上传图片端口。
+	cardImages *adapter.CardImageService
+	// itemMigration 是商品跨账号迁移用例。
+	itemMigration *itemsapp.ItemMigrationService
 	// publishAutomationRules 是批量发布成功后幂等准备自动化规则的应用服务。
 	publishAutomationRules *automationapp.PublishRuleService
 	// defaultReplies 是默认回复配置与投递记录应用服务。
@@ -314,7 +319,11 @@ type TransportPorts struct {
 	AutomationRules             *automationapp.RuleService
 	Cards                       *cardsapp.Service
 	// APICardTester 是卡券 API 测试请求应用端口。
-	APICardTester          cardsapp.APIRequestTester
+	APICardTester cardsapp.APIRequestTester
+	// CardImages 提供图片卡密本地上传图片的保存与归属读取能力。
+	CardImages *adapter.CardImageService
+	// ItemMigration 提供商品跨账号迁移用例。
+	ItemMigration          *itemsapp.ItemMigrationService
 	PublishAutomationRules *automationapp.PublishRuleService
 	DefaultReplies         *defaultreplyapp.Service
 	Keywords               *keywordsapp.Service
@@ -339,7 +348,8 @@ func (services *Services) TransportPorts() TransportPorts {
 		AccountSummaries: services.accountSummaries, AccountTasks: services.accountTasks, Chat: services.chat,
 		UncertainNotifications: services.uncertainNotifications, NotificationChannels: services.notificationChannels,
 		Analytics: services.analytics, AutomationIssues: services.automationIssues, AutomationRules: services.automationRules,
-		Cards: services.cards, APICardTester: services.apiCardTester, PublishAutomationRules: services.publishAutomationRules, DefaultReplies: services.defaultReplies,
+		Cards: services.cards, APICardTester: services.apiCardTester, CardImages: services.cardImages, ItemMigration: services.itemMigration,
+		PublishAutomationRules: services.publishAutomationRules, DefaultReplies: services.defaultReplies,
 		Keywords: services.keywords, Settings: services.settings, Admin: services.admin,
 	}
 }
@@ -504,6 +514,8 @@ func New(dependencies Dependencies) (*Services, error) {
 		automationRules:        dependencies.TransportApplications.AutomationRules,
 		cards:                  dependencies.TransportApplications.Cards,
 		apiCardTester:          dependencies.TransportApplications.APICardTester,
+		cardImages:             dependencies.TransportApplications.CardImages,
+		itemMigration:          dependencies.TransportApplications.ItemMigration,
 		publishAutomationRules: dependencies.TransportApplications.PublishAutomationRules,
 		automationIssues:       dependencies.TransportApplications.AutomationIssues,
 		defaultReplies:         dependencies.TransportApplications.DefaultReplies,

@@ -36,6 +36,8 @@ export interface APIRequestBuilderProps {
   responsePath: string;
   // retryEnabled 表示是否启用带幂等键的重试。
   retryEnabled: boolean;
+  // messageTemplate 是可选的发货文案模板；留空直接发送接口提取内容。
+  messageTemplate: string;
   // headersAction 是编辑时请求头敏感模板的三态处理方式。
   headersAction?: APISecretAction;
   // paramsAction 是编辑时查询参数敏感模板的三态处理方式。
@@ -57,6 +59,7 @@ export type APIRequestField =
   | 'body'
   | 'responsePath'
   | 'retryEnabled'
+  | 'messageTemplate'
   | 'headersAction'
   | 'paramsAction';
 
@@ -227,6 +230,7 @@ export const APIRequestBuilder = ({
   body,
   responsePath,
   retryEnabled,
+  messageTemplate,
   headersAction,
   paramsAction,
 	onChange,
@@ -270,8 +274,9 @@ export const APIRequestBuilder = ({
 				<span>HTTP 状态：{testState.result.status_code || '网络错误'}</span>
 				<span>响应类型：{testState.result.response_content_type || '未知'}</span>
 			  </div>
-			  <div className="mt-2 grid gap-1 text-gray-700"><span>响应字段：{testState.result.response_fields.length ? testState.result.response_fields.join('、') : '未识别 JSON 字段'}</span><span>提取结果：{testState.result.extracted_value || '未提取到内容'}</span></div>
+			  <div className="mt-2 grid gap-1 text-gray-700"><span>响应字段：{testState.result?.response_fields?.join('、') || '未识别 JSON 字段'}</span><span>提取结果：{testState.result.extracted_value || '未提取到内容'}</span></div>
 			  {testState.result.response_preview && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg bg-white/70 p-2 text-xs text-gray-600">{testState.result.response_preview}</pre>}
+			  {testState.result.rendered_preview && <div className="mt-2 rounded-lg bg-white/70 p-2 text-xs text-gray-700"><span className="font-bold">最终发送内容：</span><pre className="mt-1 whitespace-pre-wrap font-mono">{testState.result.rendered_preview}</pre></div>}
 			</div>
 		  )}
 		</div>
@@ -349,8 +354,20 @@ export const APIRequestBuilder = ({
         </div>
         <label className="flex items-center gap-2 self-end pb-3 text-sm font-bold text-gray-700">
           <input type="checkbox" checked={retryEnabled} onChange={/* 当前回调切换 API 幂等重试。 */ (event: ChangeEvent<HTMLInputElement>) => onChange('retryEnabled', event.target.checked)} />
-          启用幂等重试（需配置 {'{idempotency_key}'}）
+          启用幂等重试（需配置 {'{idempotency_key}'})
         </label>
+      </div>
+
+      <div className="space-y-2 border-t border-blue-100 pt-5">
+        <label className="block text-sm font-bold text-gray-700">发货文案模板（可选）</label>
+        <textarea
+          aria-label="发货文案模板"
+          value={messageTemplate}
+          onChange={/* 当前回调更新发货文案模板。 */ (event: ChangeEvent<HTMLTextAreaElement>) => onChange('messageTemplate', event.target.value)}
+          className="h-24 w-full resize-y ios-input rounded-xl px-4 py-3 font-mono text-sm"
+          placeholder={'兑换码：【{card_content}】，请打开 http://example.com 去兑换'}
+        />
+        <p className="text-xs text-gray-500">留空则直接发送接口提取内容；{'{card_content}'} 代表提取到的卡密内容，支持 {'{order_id}'}、{'{buyer_id}'}、{'{spec_value}'} 等订单变量。</p>
       </div>
     </div>
   );

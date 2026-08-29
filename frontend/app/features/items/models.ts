@@ -455,3 +455,19 @@ export interface OperationResponse {
   /** 操作完成后是否需要重新登录。 */
   requires_relogin?: boolean;
 }
+
+/** 商品迁移接口的具名响应。 */
+export interface ItemMigrationResult {
+  /** 迁移是否完成。 */
+  success: boolean;
+  /** 成功迁移的商品数量。 */
+  migrated: number;
+  /** 因目标账号已存在同 ID 商品而跳过的商品 ID 列表。 */
+  skipped: string[];
+  /** 随之改绑的自动化规则数量。 */
+  rules_moved: number;
+  /** 随之改绑的关键词回复数量。 */
+  keywords_moved: number;
+  /** 随之改绑的指定商品回复数量。 */
+  replies_moved: number;
+}

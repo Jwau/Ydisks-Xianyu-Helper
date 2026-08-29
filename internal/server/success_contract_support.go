@@ -53,6 +53,8 @@ type cardResponse struct {
 	DataContent string `json:"data_content"`
 	// ImageURL 是图片卡券地址。
 	ImageURL string `json:"image_url"`
+	// ImageID 是本地上传图片的引用；大于 0 表示上传模式。
+	ImageID int64 `json:"image_id"`
 	// Description 是卡券组描述。
 	Description string `json:"description"`
 	// Enabled 表示卡券组是否启用。

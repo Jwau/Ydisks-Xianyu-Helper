@@ -12,6 +12,7 @@ import { batchStatusClass,batchStatusText } from '../batchState';
 import { BatchPhaseIndicator } from '../components/BatchPhaseIndicator';
 import { consumeSelectedFile } from '../fileInput';
 import { useItemPublishBatch } from '../hooks';
+import { migrateItems, type ItemMigrationResult } from '../api';
 import { useItemActions } from '../itemActions';
 import type { ItemListProps } from '../types';
 
@@ -35,6 +36,20 @@ const ItemList: React.FC<ItemListProps> = ({ onConfigureDelivery }) => {
   const [selectedAccount, setSelectedAccount] = useState<string>('');
   // [accountFilter, 解构得到当前 Hook 返回的状态和操作函数。
   const [accountFilter, setAccountFilter] = useState<string>('');
+  // showMigrateModal 表示商品迁移弹窗是否打开。
+  const [showMigrateModal, setShowMigrateModal] = useState(false);
+  // migrateSource 是迁移源账号。
+  const [migrateSource, setMigrateSource] = useState('');
+  // migrateTarget 是迁移目标账号。
+  const [migrateTarget, setMigrateTarget] = useState('');
+  // migrateSelection 记录勾选的商品 ID。
+  const [migrateSelection, setMigrateSelection] = useState<Record<string, boolean>>({});
+  // migrateBusy 表示迁移请求进行中。
+  const [migrateBusy, setMigrateBusy] = useState(false);
+  // migrateResult 保存最近一次迁移结果。
+  const [migrateResult, setMigrateResult] = useState<ItemMigrationResult | null>(null);
+  // migrateError 是迁移失败的提示。
+  const [migrateError, setMigrateError] = useState('');
   // itemsRequestGeneration 标识商品列表最新一次读取，旧响应不得覆盖较新的同步或刷新结果。
   const itemsRequestGeneration = useRef(0);
   // shippingRulesRequestGeneration 标识发货规则最新一次读取，旧响应不得覆盖较新的规则配置。
@@ -185,6 +200,36 @@ const ItemList: React.FC<ItemListProps> = ({ onConfigureDelivery }) => {
     /* 当前回调处理集合中的单个元素。 */ () => accountFilter ? items.filter(/* 当前回调处理集合中的单个元素。 */ item => item.cookie_id === accountFilter) : items,
     [accountFilter, items],
   );
+  // migrateSourceItems 是源账号下可勾选迁移的商品列表。
+  const migrateSourceItems = useMemo(
+    /* migrateSourceItemsMemo 过滤出源账号商品。 */ () => items.filter(/* sourceFilter 按源账号过滤。 */ item => item.cookie_id === migrateSource),
+    [items, migrateSource],
+  );
+  // migrateCheckedCount 是当前勾选的商品数量。
+  const migrateCheckedCount = migrateSourceItems.filter(/* checkedFilter 统计勾选商品。 */ item => migrateSelection[item.item_id]).length;
+
+  // runMigration 执行商品迁移请求并展示结果。
+  const runMigration = async () => {
+    if (!migrateSource || !migrateTarget || migrateCheckedCount === 0) return;
+    setMigrateBusy(true);
+    setMigrateError('');
+    setMigrateResult(null);
+    try {
+      // result 是迁移接口返回的统计。
+      const result = await migrateItems({
+        from_cookie_id: migrateSource,
+        to_cookie_id: migrateTarget,
+        item_ids: migrateSourceItems.filter(/* pickChecked 收集勾选商品 ID。 */ item => migrateSelection[item.item_id]).map(/* pickId 提取商品 ID。 */ item => item.item_id),
+      });
+      setMigrateResult(result);
+      await loadItems();
+    } catch (error) {
+      setMigrateError(error instanceof Error ? error.message : '商品迁移失败');
+    } finally {
+      setMigrateBusy(false);
+    }
+  };
+
   // accountName 账号名称。
   const accountName = (cookieId: string) => {
     // account 账号。
@@ -262,6 +307,12 @@ const ItemList: React.FC<ItemListProps> = ({ onConfigureDelivery }) => {
             >
               <Plus className="w-4 h-4" />
               添加商品
+            </button>
+            <button
+              onClick={/* 当前回调打开商品迁移弹窗。 */ () => setShowMigrateModal(true)}
+              className="px-5 py-3 rounded-2xl font-bold bg-indigo-500 text-white hover:bg-indigo-600 transition-colors flex items-center gap-2 shadow-lg shadow-indigo-100"
+            >
+              迁移商品
             </button>
             <button
               onClick={openPublishModal}
@@ -934,6 +985,80 @@ const ItemList: React.FC<ItemListProps> = ({ onConfigureDelivery }) => {
           </div>
         </div>
       , document.body)}
+
+      {showMigrateModal && createPortal(
+        <div className="modal-overlay-centered">
+          <div className="modal-container">
+            <div className="modal-header">
+              <h3 className="text-xl font-extrabold text-gray-900">迁移商品</h3>
+              <button onClick={/* 当前回调关闭迁移弹窗。 */ () => setShowMigrateModal(false)} className="p-2 rounded-xl hover:bg-gray-100 transition-colors" title="关闭">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="modal-body space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">源账号</label>
+                  <select
+                    value={migrateSource}
+                    onChange={/* 当前回调选择迁移源账号并清空勾选。 */ (e) => { setMigrateSource(e.target.value); setMigrateSelection({}); setMigrateResult(null); }}
+                    className="w-full ios-input px-3 py-3 rounded-xl text-sm"
+                  >
+                    <option value="">请选择源账号</option>
+                    {accounts.map(/* 当前回调渲染源账号选项。 */ account => <option key={account.id} value={account.id}>{accountName(account.id)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">目标账号</label>
+                  <select
+                    value={migrateTarget}
+                    onChange={/* 当前回调选择迁移目标账号。 */ (e) => { setMigrateTarget(e.target.value); setMigrateResult(null); }}
+                    className="w-full ios-input px-3 py-3 rounded-xl text-sm"
+                  >
+                    <option value="">请选择目标账号</option>
+                    {accounts.filter(/* targetFilter 目标不能与源相同。 */ account => account.id !== migrateSource).map(/* 当前回调渲染目标账号选项。 */ account => <option key={account.id} value={account.id}>{accountName(account.id)}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="border border-gray-200 rounded-xl max-h-64 overflow-y-auto">
+                {migrateSourceItems.length === 0 ? (
+                  <p className="p-4 text-sm text-gray-400 text-center">{migrateSource ? '该账号下没有商品' : '请先选择源账号'}</p>
+                ) : (
+                  migrateSourceItems.map(/* 当前回调渲染可勾选商品行。 */ item => (
+                    <label key={item.item_id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={!!migrateSelection[item.item_id]}
+                        onChange={/* 当前回调切换商品勾选状态。 */ (e) => setMigrateSelection(current => ({ ...current, [item.item_id]: e.target.checked }))}
+                      />
+                      <span className="text-sm text-gray-700 truncate">{item.item_title || item.item_id}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <p className="text-xs text-gray-500">迁移会把商品及其按商品绑定的自动化规则、关键词回复、指定商品回复一起改绑到目标账号；目标账号已存在同 ID 商品时该商品会被跳过。</p>
+              {migrateResult && (
+                <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-gray-700">
+                  <p className="font-bold text-green-700">迁移完成：成功 {migrateResult.migrated} 个商品</p>
+                  <p>自动化规则 {migrateResult.rules_moved} 条 · 关键词回复 {migrateResult.keywords_moved} 条 · 指定商品回复 {migrateResult.replies_moved} 条</p>
+                  {migrateResult.skipped.length > 0 && <p className="text-amber-600">跳过（目标已存在）：{migrateResult.skipped.join('、')}</p>}
+                </div>
+              )}
+              {migrateError && <p className="text-sm font-semibold text-red-600">{migrateError}</p>}
+            </div>
+            <div className="modal-footer">
+              <button
+                disabled={migrateBusy || !migrateSource || !migrateTarget || migrateCheckedCount === 0}
+                onClick={/* 当前回调执行商品迁移。 */ runMigration}
+                className="w-full ios-btn-primary px-6 py-3.5 rounded-xl font-bold disabled:opacity-50"
+              >
+                {migrateBusy ? '迁移中…' : `开始迁移（已选 ${migrateCheckedCount} 个商品）`}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

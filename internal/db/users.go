@@ -262,6 +262,7 @@ func (u *Users) Delete(ctx context.Context, userID int64) error {
 	for _, query := range []string{
 		`DELETE FROM automation_rules WHERE user_id=?`,
 		`DELETE FROM cards WHERE user_id=?`,
+		`DELETE FROM card_images WHERE user_id=?`,
 		`DELETE FROM notification_channels WHERE user_id=?`,
 	} {
 		if // err 用于本次流程后续判断的err

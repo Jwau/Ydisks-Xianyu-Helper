@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -498,8 +500,8 @@ func TestOpenAPIQueryChatAndOrderResponses(t *testing.T) {
 
 // TestOpenAPIItemAndCardResponses 验证阶段四商品与卡券查询的真实成功、未认证和文件错误响应符合 OpenAPI。
 func TestOpenAPIItemAndCardResponses(t *testing.T) {
-	// srv、_、cleanup 分别是测试 Server、无需直接访问的存储和资源释放函数。
-	srv, _, cleanup := newTestServer(t)
+	// srv、store、cleanup 分别是测试 Server、可写入的存储和资源释放函数。
+	srv, store, cleanup := newTestServer(t)
 	defer cleanup()
 	// handler 是包含商品和卡券版本化路由的真实 chi Router。
 	handler := srv.Router()
@@ -567,6 +569,13 @@ func TestOpenAPIItemAndCardResponses(t *testing.T) {
 	appendCardRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(appendCardRecorder, appendCardRequest)
 	assertOpenAPISuccessResponse(t, appendCardRequest, appendCardRecorder)
+	// copyCardRequest 是复制当前 data 卡券的成功请求；副本由服务端生成并返回新标识。
+	copyCardRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards/"+cardID+"/copy", nil)
+	copyCardRequest.AddCookie(sessionCookie)
+	// copyCardRecorder 捕获复制响应。
+	copyCardRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(copyCardRecorder, copyCardRequest)
+	assertOpenAPISuccessResponse(t, copyCardRequest, copyCardRecorder)
 	// deleteCardRequest 是删除同一资源的成功请求，保证测试不依赖虚构路径参数。
 	deleteCardRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/cards/"+cardID, nil)
 	deleteCardRequest.AddCookie(sessionCookie)
@@ -574,6 +583,76 @@ func TestOpenAPIItemAndCardResponses(t *testing.T) {
 	deleteCardRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(deleteCardRecorder, deleteCardRequest)
 	assertOpenAPISuccessResponse(t, deleteCardRequest, deleteCardRecorder)
+
+	// 迁移场景需要同一用户名下两个账号；两个账号都归属管理员。
+	// migrateSourceCookieID 与 migrateTargetCookieID 是插入的源、目标账号标识。
+	const migrateSourceCookieID = "acc-migrate-a"
+	// secondCookieID 是插入的目标账号标识。
+	const secondCookieID = "acc-migrate-b"
+	// sourceInsertErr 表示源账号插入错误。
+	if sourceInsertErr := store.Cookies.Save(context.Background(), migrateSourceCookieID, "cookie-a-value", 1); sourceInsertErr != nil {
+		t.Fatalf("准备源账号失败: %v", sourceInsertErr)
+	}
+	// targetInsertErr 表示目标账号插入错误。
+	if targetInsertErr := store.Cookies.Save(context.Background(), secondCookieID, "cookie-b-value", 1); targetInsertErr != nil {
+		t.Fatalf("准备目标账号失败: %v", targetInsertErr)
+	}
+	// createMigrateItemRequest 在源账号下创建一条商品记录。
+	createMigrateItemRequest := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+migrateSourceCookieID, strings.NewReader(`{"item_id":"migrate-item-1","item_title":"迁移测试商品"}`))
+	createMigrateItemRequest.AddCookie(sessionCookie)
+	// createMigrateItemRecorder 捕获创建响应。
+	createMigrateItemRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(createMigrateItemRecorder, createMigrateItemRequest)
+	// 创建结果只要求不 5xx；部分实现返回冲突时迁移场景仍可用既有商品。
+	if createMigrateItemRecorder.Code >= 500 {
+		t.Fatalf("创建迁移源商品失败 status=%d body=%s", createMigrateItemRecorder.Code, createMigrateItemRecorder.Body.String())
+	}
+	// migrateRequest 是把商品迁到第二账号的成功请求。
+	migrateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/items/migrate", strings.NewReader(`{"from_cookie_id":"`+migrateSourceCookieID+`","to_cookie_id":"`+secondCookieID+`","item_ids":["migrate-item-1"]}`))
+	migrateRequest.AddCookie(sessionCookie)
+	// migrateRecorder 捕获迁移响应。
+	migrateRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(migrateRecorder, migrateRequest)
+	assertOpenAPISuccessResponse(t, migrateRequest, migrateRecorder)
+
+	// pngBytes 是用于上传测试的 1x1 PNG 字节。
+	pngBytes, decodeErr := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+	if decodeErr != nil {
+		t.Fatalf("解码测试 PNG 失败: %v", decodeErr)
+	}
+	// uploadBody、uploadWriter 构造 multipart 图片上传请求；uploadWriter 是 multipart 写入器。
+	uploadBody := &bytes.Buffer{}
+	// uploadWriter 是 multipart 表单写入器，负责编码 PNG 字节为上传载荷。
+	uploadWriter := multipart.NewWriter(uploadBody)
+	// fileWriter 写入 PNG 字节。
+	fileWriter, _ := uploadWriter.CreateFormFile("file", "pixel.png")
+	_, _ = fileWriter.Write(pngBytes)
+	_ = uploadWriter.Close()
+	// uploadImageRequest 是上传本地上传图片的成功请求。
+	uploadImageRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards/images", uploadBody)
+	uploadImageRequest.Header.Set("Content-Type", uploadWriter.FormDataContentType())
+	uploadImageRequest.AddCookie(sessionCookie)
+	// uploadImageRecorder 捕获上传响应。
+	uploadImageRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uploadImageRecorder, uploadImageRequest)
+	assertOpenAPISuccessResponse(t, uploadImageRequest, uploadImageRecorder)
+	// uploadedImage 保存上传响应中的图片标识。
+	var uploadedImage struct {
+		Success  bool   `json:"success"`
+		ImageID  int64  `json:"image_id"`
+		Filename string `json:"filename"`
+	}
+	// uploadDecodeErr 表示上传响应解码错误。
+	if uploadDecodeErr := json.Unmarshal(uploadImageRecorder.Body.Bytes(), &uploadedImage); uploadDecodeErr != nil || uploadedImage.ImageID <= 0 {
+		t.Fatalf("上传图片响应错误 body=%s err=%v", uploadImageRecorder.Body.String(), uploadDecodeErr)
+	}
+	// fetchImageRequest 是读取上传图片的成功请求。
+	fetchImageRequest := httptest.NewRequest(http.MethodGet, "/api/v1/cards/images/"+strconv.FormatInt(uploadedImage.ImageID, 10), nil)
+	fetchImageRequest.AddCookie(sessionCookie)
+	// fetchImageRecorder 捕获图片字节响应。
+	fetchImageRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(fetchImageRecorder, fetchImageRequest)
+	assertOpenAPISuccessResponse(t, fetchImageRequest, fetchImageRecorder)
 
 	// invalidUploadRequest 是缺失文件的卡券上传请求，必须返回统一错误 envelope。
 	invalidUploadRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards/batch", strings.NewReader("--openapi--\r\n"))

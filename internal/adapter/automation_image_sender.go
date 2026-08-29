@@ -120,6 +120,22 @@ func (s automationImageSender) SendImage(ctx context.Context, chatID, toUserID, 
 	return s.sender.SendImage(ctx, chatID, toUserID, uploaded.URL, cardID, uploaded.Width, uploaded.Height)
 }
 
+// SendImageData 把本地上传图片的字节直接上传到闲鱼图片服务后发送，跳过远程下载步骤。
+func (s automationImageSender) SendImageData(ctx context.Context, chatID, toUserID, filename, contentType string, data []byte, cardID int64) error {
+	if s.sender == nil || s.uploader == nil {
+		return fmt.Errorf("%w: 图片发送器未初始化", automation.ErrMessageNotSent)
+	}
+	// uploaded、err 保存闲鱼图片服务返回的发送地址和上传阶段错误。
+	uploaded, err := s.uploader.UploadChatImage(ctx, s.accountID, filename, contentType, data)
+	if err != nil {
+		return fmt.Errorf("%w: 上传图片卡密失败: %v", automation.ErrMessageNotSent, err)
+	}
+	if strings.TrimSpace(uploaded.URL) == "" {
+		return fmt.Errorf("%w: 上传图片卡密未返回地址", automation.ErrMessageNotSent)
+	}
+	return s.sender.SendImage(ctx, chatID, toUserID, uploaded.URL, cardID, uploaded.Width, uploaded.Height)
+}
+
 // UpdateCookie 将账号运行时主动更新的 Cookie 透传给原始发送器，不改变既有凭证协调责任。
 func (s automationImageSender) UpdateCookie(cookieStr string) {
 	if s.sender != nil {

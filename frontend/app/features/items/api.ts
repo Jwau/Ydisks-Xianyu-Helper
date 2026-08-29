@@ -1,4 +1,4 @@
-import type { PublishLocation } from './models';
+import type { ItemMigrationResult, PublishLocation } from './models';
 import {
 AccountDetail,
 BatchCancelResponse,
@@ -16,6 +16,11 @@ import { ApiError, type RequestControlOptions } from '../../../shared/http/clien
 import { contractClient, contractMultipartBody, runContractRequest } from '../../../shared/api-contract/client';
 import { collectionFrom } from '../../../shared/http/contract';
 export type * from './models';
+
+// migrateItems 把选定商品从源账号迁移到目标账号；两个账号都必须属于当前用户。
+export const migrateItems = async (data: { from_cookie_id: string; to_cookie_id: string; item_ids: string[] }, options?: RequestControlOptions): Promise<ItemMigrationResult> => {
+  return runContractRequest(/* signal 控制商品迁移请求的取消和超时。 */ signal => contractClient.POST('/api/v1/items/migrate', { body: data, signal }), options);
+};
 import { getPublishLocations as queryPublishLocations,type PublishLocationRequestOptions } from './amapLocation';
 
 /** 商品账号筛选器读取非敏感账号摘要。 */

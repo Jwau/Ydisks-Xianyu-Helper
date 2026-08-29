@@ -140,10 +140,12 @@ func (c *apiDeliveryClient) Test(ctx context.Context, input cardsapp.APIRequestT
 	// rawBody、err 分别是受 1 MiB 限制的响应内容和读取错误。
 	rawBody, err := readAPIDeliveryBody(response.Body)
 	if err != nil {
-		return cardsapp.APIRequestTestResult{Status: "failed", StatusCode: response.StatusCode, ResponseContentType: response.Header.Get("Content-Type")}, err
+		// ResponseFields 固定为空切片，保证 JSON 输出是 [] 而不是让前端空值解引用的 null。
+		return cardsapp.APIRequestTestResult{Status: "failed", StatusCode: response.StatusCode, ResponseContentType: response.Header.Get("Content-Type"), ResponseFields: []string{}}, err
 	}
-	// result 是返回给前端的非敏感状态、类型和限长响应预览。
-	result := cardsapp.APIRequestTestResult{Status: "success", StatusCode: response.StatusCode, ResponseContentType: response.Header.Get("Content-Type"), ResponsePreview: truncateAPITestPreview(string(rawBody))}
+	// result 是返回给前端的非敏感状态、类型和限长响应预览；
+	// ResponseFields 初始化为空切片，非 JSON 对象响应保持 [] 而不是 null。
+	result := cardsapp.APIRequestTestResult{Status: "success", StatusCode: response.StatusCode, ResponseContentType: response.Header.Get("Content-Type"), ResponsePreview: truncateAPITestPreview(string(rawBody)), ResponseFields: []string{}}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		result.Status = "failed"
 		return result, nil
@@ -163,16 +165,57 @@ func (c *apiDeliveryClient) Test(ctx context.Context, input cardsapp.APIRequestT
 			}
 			sort.Strings(result.ResponseFields)
 		}
-		if config.ResponsePath != "" {
-			// value、found 分别是响应路径命中的值和是否存在标记。
-			if value, found := lookupAPIResponsePath(document, config.ResponsePath); found {
-				result.ExtractedValue = truncateAPITestPreview(apiJSONScalar(value))
-			}
-		} else {
-			result.ExtractedValue = truncateAPITestPreview(apiJSONScalar(document))
+		// content、contentOK 是按发货同源规则提取出的卡密文本和是否存在标记。
+		content, contentOK := extractAPIDeliveryContent(document, config.ResponsePath)
+		if contentOK {
+			result.ExtractedValue = truncateAPITestPreview(content)
+		}
+		// renderedPreview 是配置发货文案模板时按本次提取内容渲染的最终发送预览。
+		if rendered, ok := renderAPITestMessage(config.MessageTemplate, content, variables); ok {
+			result.RenderedPreview = truncateAPITestPreview(rendered)
 		}
 	}
 	return result, nil
+}
+
+// extractAPIDeliveryContent 按发货同源规则提取卡密文本：配置路径时按路径查找，
+// 否则对象优先取 data/content/card 字段，最后整体转紧凑文本。
+func extractAPIDeliveryContent(document any, responsePath string) (string, bool) {
+	// responsePath 非空时按点号路径精确查找；未命中视为提取失败。
+	if strings.TrimSpace(responsePath) != "" {
+		// value、found 分别是响应路径命中的值和是否存在标记。
+		if value, found := lookupAPIResponsePath(document, responsePath); found {
+			return apiJSONScalar(value), true
+		}
+		return "", false
+	}
+	// object、ok 保存 JSON 对象视图和类型判断结果。
+	if object, ok := document.(map[string]any); ok {
+		// key 表示发货默认提取候选字段名。
+		for _, key := range []string{"data", "content", "card"} {
+			// value、found 保存候选字段值及是否存在标记。
+			if value, found := object[key]; found && value != nil {
+				return apiJSONScalar(value), true
+			}
+		}
+	}
+	return apiJSONScalar(document), true
+}
+
+// renderAPITestMessage 按测试变量渲染发货文案模板；模板为空或提取内容为空时不渲染。
+func renderAPITestMessage(template, extractedContent string, variables map[string]string) (string, bool) {
+	// trimmed 保存去空白后的模板文本。
+	trimmed := strings.TrimSpace(template)
+	if trimmed == "" || extractedContent == "" {
+		return "", false
+	}
+	// out 是渲染结果；先替换卡密内容占位符，再替换订单上下文变量。
+	out := strings.ReplaceAll(trimmed, "{card_content}", extractedContent)
+	// key、value 分别是测试变量占位符及其替换值。
+	for key, value := range variables {
+		out = strings.ReplaceAll(out, key, value)
+	}
+	return out, true
 }
 
 // truncateAPITestPreview 限制测试结果文本长度并标记被截断的响应。
@@ -487,17 +530,9 @@ func readAPIDeliveryResponse(reader io.Reader, contentType, responsePath string)
 		}
 		return apiJSONScalar(value), nil
 	}
-	// object、ok 保存可按默认字段提取的 JSON 对象及类型判断。
-	if object, ok := document.(map[string]any); ok {
-		// key 表示默认响应提取候选字段名。
-		for _, key := range []string{"data", "content", "card"} {
-			// value、found 保存候选字段的值及是否存在。
-			if value, found := object[key]; found && value != nil {
-				return apiJSONScalar(value), nil
-			}
-		}
-	}
-	return apiJSONScalar(document), nil
+	// content、_ 是按发货默认规则提取的卡密文本；对象缺省字段时整体转文本。
+	content, _ := extractAPIDeliveryContent(document, "")
+	return content, nil
 }
 
 // readAPIDeliveryBody 读取 API 响应体并拒绝超过 1 MiB 的内容，不返回正文到日志或 HTTP 响应。

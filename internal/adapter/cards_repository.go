@@ -123,7 +123,7 @@ func (r *CardsRepository) validate() error {
 
 // cardApplicationModel 将数据库卡券记录转换为基础设施无关的应用模型。
 func cardApplicationModel(record db.CardFull) cardsapp.Card {
-	// summary 保存数据库摘要对应的应用层脱敏摘要。
+	// summary 保存数据库摘要对应的应用层配置视图副本。
 	var summary *cardsapp.APIConfigSummary
 	if record.APIConfigSummary != nil {
 		// summaryValue 保存当前记录的独立摘要副本，避免共享数据库对象。
@@ -133,22 +133,37 @@ func cardApplicationModel(record db.CardFull) cardsapp.Card {
 			RetryEnabled: record.APIConfigSummary.RetryEnabled, HeadersConfigured: record.APIConfigSummary.HeadersConfigured,
 			ParamsConfigured: record.APIConfigSummary.ParamsConfigured, Ready: record.APIConfigSummary.Ready,
 			ValidationError: record.APIConfigSummary.ValidationError,
+			MessageTemplate: record.APIConfigSummary.MessageTemplate,
+			Headers:         copyAPITemplateMap(record.APIConfigSummary.Headers),
+			Params:          copyAPITemplateMap(record.APIConfigSummary.Params),
+			Body:            copyAPITemplateMap(record.APIConfigSummary.Body),
 		}
 		summary = &summaryValue
 	}
 	return cardsapp.Card{
 		ID: record.ID, Name: record.Name, Type: record.Type, APIConfig: record.APIConfig, APIConfigSummary: summary,
-		TextContent: record.TextContent, DataContent: record.DataContent, ImageURL: record.ImageURL,
+		TextContent: record.TextContent, DataContent: record.DataContent, ImageURL: record.ImageURL, ImageID: record.ImageID,
 		Description: record.Description, Enabled: record.Enabled, DelaySeconds: record.DelaySeconds,
 		IsMultiSpec: record.IsMultiSpec, SpecName: record.SpecName, SpecValue: record.SpecValue, UserID: record.UserID,
 	}
+}
+
+// copyAPITemplateMap 复制 API 模板对象，避免应用层与数据库摘要共享可变映射。
+func copyAPITemplateMap(value map[string]any) map[string]any {
+	// copied 保存顶层键值复制结果；模板值本身按不可变数据使用。
+	copied := make(map[string]any, len(value))
+	// key、item 分别是模板字段名和字段值。
+	for key, item := range value {
+		copied[key] = item
+	}
+	return copied
 }
 
 // cardDatabaseModel 将应用卡券模型转换为数据库仓储要求的写入模型。
 func cardDatabaseModel(card cardsapp.Card) db.CardFull {
 	return db.CardFull{
 		ID: card.ID, Name: card.Name, Type: card.Type, APIConfig: card.APIConfig,
-		TextContent: card.TextContent, DataContent: card.DataContent, ImageURL: card.ImageURL,
+		TextContent: card.TextContent, DataContent: card.DataContent, ImageURL: card.ImageURL, ImageID: card.ImageID,
 		Description: card.Description, Enabled: card.Enabled, DelaySeconds: card.DelaySeconds,
 		IsMultiSpec: card.IsMultiSpec, SpecName: card.SpecName, SpecValue: card.SpecValue, UserID: card.UserID,
 	}

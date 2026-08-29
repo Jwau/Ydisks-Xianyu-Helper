@@ -2250,6 +2250,136 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  "/api/v1/cards/images":
+    post:
+      operationId: postApiV1CardsImages
+      summary: postApiV1CardsImages
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardImageUploadResponse'
+        '400':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  "/api/v1/cards/images/{image_id}":
+    get:
+      operationId: getApiV1CardsImagesByimage_id
+      summary: getApiV1CardsImagesByimage_id
+      parameters:
+          - name: image_id
+            in: path
+            required: true
+            schema:
+              type: string
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: 图片字节
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  "/api/v1/cards/{card_id}/copy":
+    post:
+      operationId: postApiV1CardsBycard_idCopy
+      summary: postApiV1CardsBycard_idCopy
+      parameters:
+          - name: card_id
+            in: path
+            required: true
+            schema:
+              type: string
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MutationIDResponse'
+        '400':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   "/api/v1/cards/{card_id}/details":
     get:
       operationId: getApiV1CardsBycard_idDetails
@@ -3535,6 +3665,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  "/api/v1/items/migrate":
+    post:
+      operationId: postApiV1ItemsMigrate
+      summary: postApiV1ItemsMigrate
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemMigrationRequest'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemMigrationResponse'
+        '400':
+          description: 统一错误响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
           description: 统一错误响应
           content:
             application/json:
@@ -7320,6 +7492,7 @@ components:
       properties:
         name: {type: string}
         type: {type: string, enum: [api, text, data, image]}
+        image_id: {type: integer}
         api_config:
           oneOf:
             - $ref: '#/components/schemas/APICardConfigMutation'
@@ -7385,6 +7558,7 @@ components:
         text_content: {type: string}
         data_content: {type: string}
         image_url: {type: string}
+        image_id: {type: integer}
         description: {type: string}
         enabled: {type: boolean}
         delay_seconds: {type: integer}
@@ -7413,20 +7587,59 @@ components:
         params_action: {type: string, enum: [retain, replace, clear]}
         response_path: {type: string}
         retry_enabled: {type: boolean}
+        message_template: {type: string}
     APICardConfigResponse:
       type: object
-      required: [url, method, timeout_seconds, content_type, retry_enabled, headers_configured, params_configured, ready]
+      required: [url, method, timeout_seconds, content_type, headers, params, body, retry_enabled, headers_configured, params_configured, ready]
       properties:
         url: {type: string}
         method: {type: string, enum: [GET, POST]}
         timeout_seconds: {type: integer}
         content_type: {type: string}
+        headers:
+          type: object
+          additionalProperties: true
+        params:
+          type: object
+          additionalProperties: true
+        body:
+          type: object
+          additionalProperties: true
         response_path: {type: string}
         retry_enabled: {type: boolean}
         headers_configured: {type: boolean}
         params_configured: {type: boolean}
         ready: {type: boolean}
         validation_error: {type: string}
+        message_template: {type: string}
+    ItemMigrationRequest:
+      type: object
+      required: [from_cookie_id, to_cookie_id, item_ids]
+      properties:
+        from_cookie_id: {type: string}
+        to_cookie_id: {type: string}
+        item_ids:
+          type: array
+          items: {type: string}
+    ItemMigrationResponse:
+      type: object
+      required: [success, migrated, skipped, rules_moved, keywords_moved, replies_moved]
+      properties:
+        success: {type: boolean}
+        migrated: {type: integer}
+        skipped:
+          type: array
+          items: {type: string}
+        rules_moved: {type: integer}
+        keywords_moved: {type: integer}
+        replies_moved: {type: integer}
+    CardImageUploadResponse:
+      type: object
+      required: [success, image_id, filename]
+      properties:
+        success: {type: boolean}
+        image_id: {type: integer}
+        filename: {type: string}
     CardAPITestRequest:
       type: object
       required: [api_config]
@@ -7445,6 +7658,7 @@ components:
         response_fields: {type: array, items: {type: string}}
         extracted_value: {type: string}
         response_preview: {type: string}
+        rendered_preview: {type: string}
     ItemListResponse:
       type: object
       required: [id, cookie_id, item_id, item_title, item_description, item_category, item_price, item_detail, item_image, is_multi_spec, multi_quantity_delivery, is_multi_qty_ship]

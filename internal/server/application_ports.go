@@ -300,6 +300,21 @@ type CardsPort interface {
 	Update(context.Context, int64, int64, cardsapp.Draft) error
 	Delete(context.Context, int64, int64) error
 	AppendData(context.Context, int64, int64, string) (int, error)
+	Copy(context.Context, int64, int64) (int64, error)
+}
+
+// ItemMigrationPort 定义商品跨账号迁移用例。
+type ItemMigrationPort interface {
+	// Migrate 把选定商品从源账号迁移到目标账号；两个账号都必须属于当前用户。
+	Migrate(ctx context.Context, userID int64, fromCookieID, toCookieID string, itemIDs []string) (itemapp.ItemMigrationResult, error)
+}
+
+// CardImagesPort 定义图片卡密本地上传图片的保存与归属读取能力。
+type CardImagesPort interface {
+	// Create 保存一张属于指定用户的上传图片并返回记录 ID。
+	Create(ctx context.Context, userID int64, filename, contentType string, data []byte) (int64, error)
+	// GetForUser 读取归属于指定用户的上传图片；found 为 false 表示图片不存在或不属于该用户。
+	GetForUser(ctx context.Context, userID, imageID int64) (found bool, filename, contentType string, data []byte, err error)
 }
 
 // APIRequestTesterPort 定义卡券 API 测试请求所需的最小应用能力。
@@ -422,6 +437,10 @@ type ApplicationPorts struct {
 	cards CardsPort
 	// apiRequestTester 执行临时 API 测试请求并返回非敏感诊断。
 	apiRequestTester APIRequestTesterPort
+	// cardImages 保存与读取图片卡密的本地上传图片。
+	cardImages CardImagesPort
+	// itemMigration 是商品跨账号迁移用例。
+	itemMigration ItemMigrationPort
 	// publishAutomationRules 是发布后自动化规则用例。
 	publishAutomationRules PublishAutomationRulesPort
 	// defaultReplies 是默认回复用例。
@@ -470,6 +489,8 @@ type ApplicationPortsInput struct {
 	AutomationRules             AutomationRulesPort
 	Cards                       CardsPort
 	APIRequestTester            APIRequestTesterPort
+	CardImages                  CardImagesPort
+	ItemMigration               ItemMigrationPort
 	PublishAutomationRules      PublishAutomationRulesPort
 	DefaultReplies              DefaultRepliesPort
 	Keywords                    KeywordsPort
@@ -492,7 +513,8 @@ func NewApplicationPorts(input ApplicationPortsInput) *ApplicationPorts {
 		accountSummaries: input.AccountSummaries, accountTasks: input.AccountTasks, chat: input.Chat,
 		uncertainNotifications: input.UncertainNotifications, notificationChannels: input.NotificationChannels,
 		analytics: input.Analytics, automationIssues: input.AutomationIssues, automationRules: input.AutomationRules,
-		cards: input.Cards, apiRequestTester: input.APIRequestTester, publishAutomationRules: input.PublishAutomationRules, defaultReplies: input.DefaultReplies,
+		cards: input.Cards, apiRequestTester: input.APIRequestTester, cardImages: input.CardImages, itemMigration: input.ItemMigration,
+		publishAutomationRules: input.PublishAutomationRules, defaultReplies: input.DefaultReplies,
 		keywords: input.Keywords, settings: input.Settings, admin: input.Admin,
 	}
 }
@@ -520,7 +542,8 @@ func (ports *ApplicationPorts) validate() error {
 		{"account_settings", ports.accountSettings}, {"account_runtime", ports.accountRuntime}, {"account_summaries", ports.accountSummaries},
 		{"account_tasks", ports.accountTasks}, {"chat", ports.chat}, {"uncertain_notifications", ports.uncertainNotifications},
 		{"notification_channels", ports.notificationChannels}, {"analytics", ports.analytics}, {"automation_issues", ports.automationIssues},
-		{"automation_rules", ports.automationRules}, {"cards", ports.cards}, {"publish_automation_rules", ports.publishAutomationRules},
+		{"automation_rules", ports.automationRules}, {"cards", ports.cards}, {"card_images", ports.cardImages},
+		{"item_migration", ports.itemMigration}, {"publish_automation_rules", ports.publishAutomationRules},
 		{"default_replies", ports.defaultReplies}, {"keywords", ports.keywords}, {"settings", ports.settings}, {"admin", ports.admin},
 	}
 	// requiredPort 是当前必须在 Server 构造前绑定的应用 Port 名称。

@@ -198,8 +198,9 @@ func TestCardCRUD(t *testing.T) {
 	}
 }
 
-// TestCardAPIDTOIsRedacted 验证 API 卡券支持具名配置请求，响应只返回脱敏摘要而不回显模板秘密。
-func TestCardAPIDTOIsRedacted(t *testing.T) {
+// TestCardAPIDTOReturnsOwnerTemplates 验证 API 卡券支持具名配置请求，
+// 所有者查询响应回显已保存的请求模板供编辑使用，且不包含平台账号凭证字段。
+func TestCardAPIDTOReturnsOwnerTemplates(t *testing.T) {
 	// srv、cleanup 保存契约测试服务器及其清理函数。
 	srv, _, cleanup := newTestServer(t)
 	defer cleanup()
@@ -208,7 +209,7 @@ func TestCardAPIDTOIsRedacted(t *testing.T) {
 	// cookie 是已认证管理员会话。
 	cookie := loginHelper(t, handler)
 	// request 是提交请求头和参数模板的新版 API 卡请求。
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/cards", strings.NewReader(`{"name":"API 脱敏卡","type":"api","api_config":{"url":"https://example.com/card","method":"POST","timeout_seconds":10,"headers":{"Authorization":"Bearer super-secret"},"params":{"code":"{order_id}"},"response_path":"data.card.code"},"enabled":true}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cards", strings.NewReader(`{"name":"API 回显卡","type":"api","api_config":{"url":"https://example.com/card","method":"POST","timeout_seconds":10,"headers":{"Authorization":"Bearer super-secret"},"params":{"code":"{order_id}"},"response_path":"data.card.code"},"enabled":true}`))
 	request.AddCookie(cookie)
 	// response 保存创建请求的 HTTP 响应。
 	response := httptest.NewRecorder()
@@ -225,19 +226,108 @@ func TestCardAPIDTOIsRedacted(t *testing.T) {
 	if listResponse.Code != http.StatusOK {
 		t.Fatalf("API 卡列表失败 status=%d body=%s", listResponse.Code, listResponse.Body.String())
 	}
-	// rows 保存脱敏卡券列表。
+	// rows 保存当前所有者的卡券列表。
 	var rows []map[string]any
-	// err 表示脱敏卡券列表 JSON 解码错误。
+	// err 表示卡券列表 JSON 解码错误。
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &rows); err != nil || len(rows) != 1 {
 		t.Fatalf("API 卡列表格式错误 rows=%v err=%v", rows, err)
 	}
-	// summary 保存响应中的 API 脱敏摘要。
+	// summary 保存响应中的 API 配置视图。
 	summary, ok := rows[0]["api_config"].(map[string]any)
 	if !ok || summary["ready"] != true || summary["url"] != "https://example.com/card" {
 		t.Fatalf("API 卡摘要错误: %+v", rows[0]["api_config"])
 	}
-	if strings.Contains(listResponse.Body.String(), "super-secret") || strings.Contains(listResponse.Body.String(), "Authorization") {
-		t.Fatalf("API 卡响应泄漏敏感模板: %s", listResponse.Body.String())
+	// headers、params 分别保存回显的请求头和查询参数模板。
+	headers, ok := summary["headers"].(map[string]any)
+	if !ok || headers["Authorization"] != "Bearer super-secret" {
+		t.Fatalf("请求头模板应回显给所有者: %+v", summary["headers"])
+	}
+	// params 保存回显的查询参数模板。
+	params, ok := summary["params"].(map[string]any)
+	if !ok || params["code"] != "{order_id}" {
+		t.Fatalf("查询参数模板应回显给所有者: %+v", summary["params"])
+	}
+	// body 保存回显的请求正文模板；未配置时必须是空对象而不是 null。
+	body, ok := summary["body"].(map[string]any)
+	if !ok || len(body) != 0 {
+		t.Fatalf("请求正文模板应为空对象: %+v", summary["body"])
+	}
+}
+
+// TestCardCopyEndpointDuplicatesOwnedCard 验证复制接口在归属校验后产出内容一致的副本卡密组。
+func TestCardCopyEndpointDuplicatesOwnedCard(t *testing.T) {
+	// srv、cleanup 保存契约测试服务器及其清理函数。
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+	// handler 是本次测试使用的完整路由处理器。
+	handler := srv.Router()
+	// cookie 是已认证管理员会话。
+	cookie := loginHelper(t, handler)
+	// createRequest 是创建 data 类型源卡密组的请求。
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards", strings.NewReader(`{"name":"源库存","type":"data","data_content":"A\nB","description":"说明","enabled":true,"delay_seconds":3,"is_multi_spec":true,"spec_name":"颜色","spec_value":"红"}`))
+	createRequest.AddCookie(cookie)
+	// createResponse 保存创建请求响应。
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusOK {
+		t.Fatalf("源卡密组创建失败 status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	// created 保存创建响应中的新卡密组标识。
+	var created mutationIDResponse
+	// createDecodeErr 表示创建响应解码错误。
+	if createDecodeErr := json.Unmarshal(createResponse.Body.Bytes(), &created); createDecodeErr != nil || created.ID <= 0 {
+		t.Fatalf("创建响应错误 body=%s err=%v", createResponse.Body.String(), createDecodeErr)
+	}
+	// copyRequest 是复制源卡密组的请求。
+	copyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards/"+strconv.FormatInt(created.ID, 10)+"/copy", nil)
+	copyRequest.AddCookie(cookie)
+	// copyResponse 保存复制请求响应。
+	copyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(copyResponse, copyRequest)
+	if copyResponse.Code != http.StatusOK {
+		t.Fatalf("复制请求失败 status=%d body=%s", copyResponse.Code, copyResponse.Body.String())
+	}
+	// copied 保存复制响应中的新卡密组标识。
+	var copied mutationIDResponse
+	// copyDecodeErr 表示复制响应解码错误。
+	if copyDecodeErr := json.Unmarshal(copyResponse.Body.Bytes(), &copied); copyDecodeErr != nil || copied.ID <= 0 || copied.ID == created.ID {
+		t.Fatalf("复制响应错误 body=%s err=%v", copyResponse.Body.String(), copyDecodeErr)
+	}
+	// listRequest 是读取复制后卡密列表的请求。
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/cards", nil)
+	listRequest.AddCookie(cookie)
+	// listResponse 保存卡密列表响应。
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listRequest)
+	// rows 保存复制后的卡密列表。
+	var rows []map[string]any
+	// listDecodeErr 表示列表 JSON 解码错误。
+	if listDecodeErr := json.Unmarshal(listResponse.Body.Bytes(), &rows); listDecodeErr != nil || len(rows) != 2 {
+		t.Fatalf("复制后列表错误 rows=%v err=%v", rows, listDecodeErr)
+	}
+	// copyRow 是按标识定位的副本卡密组；列表按 id 倒序返回，不能依赖固定位置。
+	var copyRow map[string]any
+	// row 表示当前遍历的卡密列表行。
+	for _, row := range rows {
+		if int64(row["id"].(float64)) == copied.ID {
+			copyRow = row
+			break
+		}
+	}
+	if copyRow == nil {
+		t.Fatalf("复制响应中的卡密组不在列表中 rows=%v", rows)
+	}
+	if copyRow["name"] != "源库存-副本" || copyRow["data_content"] != "A\nB" || copyRow["description"] != "说明" || copyRow["enabled"] != true || copyRow["delay_seconds"] != float64(3) {
+		t.Fatalf("副本内容错误: %+v", copyRow)
+	}
+	// 无效卡券标识必须返回 400。
+	invalidRequest := httptest.NewRequest(http.MethodPost, "/api/v1/cards/not-a-number/copy", nil)
+	invalidRequest.AddCookie(cookie)
+	// invalidResponse 保存无效标识复制响应。
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalidRequest)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("无效标识应返回 400 status=%d", invalidResponse.Code)
 	}
 }
 

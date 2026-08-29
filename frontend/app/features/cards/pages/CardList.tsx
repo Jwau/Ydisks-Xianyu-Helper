@@ -1,7 +1,7 @@
-import { Copy,CreditCard,Edit,FileText,Globe,Image as ImageIcon,Package,Plus,Save,Search,SlidersHorizontal,Trash2,Upload,X } from 'lucide-react';
+import { Copy,CopyPlus,CreditCard,Edit,FileText,Globe,Image as ImageIcon,Package,Plus,Save,Search,SlidersHorizontal,Trash2,Upload,X } from 'lucide-react';
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Card, testCardAPI } from '../api';
+import { Card, cardImageSrc, testCardAPI, uploadCardImage } from '../api';
 import { useCardActions } from '../cardActions';
 import { APIRequestBuilder } from '../components/APIRequestBuilder';
 import { BatchCardImportModal } from '../components/BatchCardImportModal';
@@ -34,6 +34,7 @@ const CardList: React.FC = () => {
     handleEdit,
     handleSaveEdit,
     handleDelete,
+    handleCopyCard,
     handleAddCard,
     toggleCardStatus,
     copyCardID,
@@ -41,6 +42,36 @@ const CardList: React.FC = () => {
   } = cardActions;
   // batchState 批量发布状态。
   const batchState = useCardBatchActions({ dataCards, loadCards });
+
+  // uploadAddImageFile 上传新增弹窗选择的本地图片并把引用写入新增草稿。
+  const uploadAddImageFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    // file 是用户选择的图片文件；重置选择框以允许重复选择同一文件。
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      // uploaded 是上传接口返回的图片引用。
+      const uploaded = await uploadCardImage(file);
+      setAddForm(current => ({ ...current, image_id: uploaded.image_id, content: '' }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '图片上传失败');
+    }
+  };
+
+  // uploadEditImageFile 上传编辑弹窗选择的本地图片并把引用写入编辑草稿。
+  const uploadEditImageFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    // file 是用户选择的图片文件；重置选择框以允许重复选择同一文件。
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      // uploaded 是上传接口返回的图片引用。
+      const uploaded = await uploadCardImage(file);
+      setEditForm(current => ({ ...current, image_id: uploaded.image_id, image_url: '' }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '图片上传失败');
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -126,6 +157,8 @@ const CardList: React.FC = () => {
                   stockInfo = card.text_content;
                 } else if (card.type === 'api' && card.api_config) {
                   stockInfo = card.api_config.url;
+                } else if (card.type === 'image' && card.image_id) {
+                  stockInfo = '本地上传图片';
                 } else if (card.type === 'image' && card.image_url) {
                   stockInfo = '图片链接';
                 }
@@ -196,6 +229,14 @@ const CardList: React.FC = () => {
                           title="编辑"
                         >
                           <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={/* 当前回调复制卡密组为新的卡密组并刷新库存。 */ () => handleCopyCard(card.id)}
+                          aria-label={`复制卡密 ${card.name}`}
+                          className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
+                          title="复制卡密组（名称自动加 -副本，内容与配置原样复制）"
+                        >
+                          <CopyPlus className="h-4 w-4" />
                         </button>
                         <button
                           onClick={/* 当前回调处理用户交互或异步状态变化。 */ () => handleDelete(card.id)}
@@ -278,9 +319,10 @@ const CardList: React.FC = () => {
                       body={editForm.api_body || ''}
                       responsePath={editForm.api_response_path || ''}
                       retryEnabled={editForm.api_retry_enabled || false}
+                      messageTemplate={editForm.api_message_template || ''}
                       headersAction={editForm.api_headers_action || 'retain'}
                       paramsAction={editForm.api_params_action || 'retain'}
-	                      onTest={/* editAPITest 使用当前编辑草稿发起临时 API 测试，不保存草稿。 */ () => testCardAPI({ url: editForm.api_url || '', method: editForm.api_method || 'GET', timeout_seconds: editForm.api_timeout || 10, headers: editForm.api_headers || undefined, params: editForm.api_params || undefined, content_type: editForm.api_content_type || 'application/json', body: editForm.api_body || undefined, response_path: editForm.api_response_path || undefined, retry_enabled: editForm.api_retry_enabled || false })}
+	                      onTest={/* editAPITest 使用当前编辑草稿发起临时 API 测试，不保存草稿。 */ () => testCardAPI({ url: editForm.api_url || '', method: editForm.api_method || 'GET', timeout_seconds: editForm.api_timeout || 10, headers: editForm.api_headers || undefined, params: editForm.api_params || undefined, content_type: editForm.api_content_type || 'application/json', body: editForm.api_body || undefined, response_path: editForm.api_response_path || undefined, retry_enabled: editForm.api_retry_enabled || false, message_template: editForm.api_message_template || undefined })}
                       onChange={/* 当前回调把 API 请求编辑器字段写回编辑草稿。 */ (field, value) => setEditForm(/* currentUpdater 基于最新编辑草稿合并 API 字段。 */ current => ({
                         ...current,
                         ...(field === 'url' ? { api_url: String(value) } : {}),
@@ -292,6 +334,7 @@ const CardList: React.FC = () => {
                         ...(field === 'body' ? { api_body: String(value) } : {}),
                         ...(field === 'responsePath' ? { api_response_path: String(value) } : {}),
                         ...(field === 'retryEnabled' ? { api_retry_enabled: Boolean(value) } : {}),
+                        ...(field === 'messageTemplate' ? { api_message_template: String(value) } : {}),
                         ...(field === 'headersAction' ? { api_headers_action: value as 'retain' | 'replace' | 'clear' } : {}),
                         ...(field === 'paramsAction' ? { api_params_action: value as 'retain' | 'replace' | 'clear' } : {}),
                       }))}
@@ -344,21 +387,36 @@ const CardList: React.FC = () => {
                       <input
                         type="url"
                         value={editForm.image_url || ''}
-                        onChange={/* 当前回调处理用户交互或异步状态变化。 */ (e) => setEditForm({ ...editForm, image_url: e.target.value })}
+                        onChange={/* 当前回调处理用户交互或异步状态变化。 */ (e) => setEditForm({ ...editForm, image_url: e.target.value, image_id: 0 })}
                         className="w-full ios-input px-4 py-3 rounded-xl font-mono text-sm"
                         placeholder="https://example.com/image.png"
                       />
-                      <p className="text-xs text-gray-500 mt-2">仅保存图片 URL；发货时会临时下载并上传到闲鱼</p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        aria-label="上传本地图片"
+                        onChange={/* 当前回调上传本地图片并把引用写入编辑草稿。 */ uploadEditImageFile}
+                        className="w-full text-sm text-gray-600 mt-2"
+                      />
+                      <p className="text-xs text-gray-500 mt-2">支持图片链接或本地上传（不超过 10 MiB）；发货时会上传到闲鱼后发送</p>
                     </div>
-                    {editForm.image_url && (
+                    {(editForm.image_id || editForm.image_url) && (
                       <div className="mt-3">
                         <label className="block text-sm font-bold text-gray-700 mb-2">图片预览</label>
-                        <img
-                          src={editForm.image_url}
-                          alt="预览"
-                          className="max-w-full max-h-48 rounded-xl border border-gray-200"
-                          onError={/* 当前回调处理用户交互或异步状态变化。 */ (e) => { e.currentTarget.src = 'https://via.placeholder.com/400x200?text=图片加载失败'; }}
-                        />
+                        {editForm.image_id ? (
+                          <img
+                            src={cardImageSrc(editForm.image_id)}
+                            alt="预览"
+                            className="max-w-full max-h-48 rounded-xl border border-gray-200"
+                          />
+                        ) : (
+                          <img
+                            src={editForm.image_url}
+                            alt="预览"
+                            className="max-w-full max-h-48 rounded-xl border border-gray-200"
+                            onError={/* 当前回调处理用户交互或异步状态变化。 */ (e) => { e.currentTarget.src = 'https://via.placeholder.com/400x200?text=图片加载失败'; }}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
@@ -513,11 +571,23 @@ const CardList: React.FC = () => {
                       <input
                         type="url"
                         value={addForm.content}
-                        onChange={/* 当前回调处理用户交互或异步状态变化。 */ (e) => setAddForm({ ...addForm, content: e.target.value })}
+                        onChange={/* 当前回调处理用户交互或异步状态变化。 */ (e) => setAddForm({ ...addForm, content: e.target.value, image_id: 0 })}
                         className="w-full ios-input px-4 py-3 rounded-xl"
                         placeholder="https://example.com/card.png"
                       />
-                      <p className="text-xs text-gray-500">仅保存图片 URL；发货时会临时下载并上传到闲鱼</p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        aria-label="上传本地图片"
+                        onChange={/* 当前回调上传本地图片并把引用写入新增草稿。 */ uploadAddImageFile}
+                        className="w-full text-sm text-gray-600"
+                      />
+                      {addForm.image_id ? (
+                        <img src={cardImageSrc(addForm.image_id)} alt="预览" className="max-w-full max-h-48 rounded-xl border border-gray-200" />
+                      ) : addForm.content ? (
+                        <img src={addForm.content} alt="预览" className="max-w-full max-h-48 rounded-xl border border-gray-200" onError={/* 当前回调处理图片加载失败。 */ (e) => { e.currentTarget.style.display = 'none'; }} />
+                      ) : null}
+                      <p className="text-xs text-gray-500">支持图片链接或本地上传（不超过 10 MiB）；发货时会上传到闲鱼后发送</p>
                     </div>
                   ) : (
                     <textarea
@@ -544,7 +614,8 @@ const CardList: React.FC = () => {
                       body={addForm.api_body}
                       responsePath={addForm.api_response_path}
                       retryEnabled={addForm.api_retry_enabled}
-	                      onTest={/* addAPITest 使用当前新增草稿发起临时 API 测试，不创建卡密。 */ () => testCardAPI({ url: addForm.content, method: addForm.api_method, timeout_seconds: addForm.api_timeout, headers: addForm.api_headers || undefined, params: addForm.api_params || undefined, content_type: addForm.api_content_type, body: addForm.api_body || undefined, response_path: addForm.api_response_path || undefined, retry_enabled: addForm.api_retry_enabled })}
+                      messageTemplate={addForm.api_message_template}
+	                      onTest={/* addAPITest 使用当前新增草稿发起临时 API 测试，不创建卡密。 */ () => testCardAPI({ url: addForm.content, method: addForm.api_method, timeout_seconds: addForm.api_timeout, headers: addForm.api_headers || undefined, params: addForm.api_params || undefined, content_type: addForm.api_content_type, body: addForm.api_body || undefined, response_path: addForm.api_response_path || undefined, retry_enabled: addForm.api_retry_enabled, message_template: addForm.api_message_template || undefined })}
                       onChange={/* 当前回调把 API 请求编辑器字段写回新增草稿。 */ (field, value) => setAddForm(/* currentUpdater 基于最新新增草稿合并 API 字段。 */ current => ({
                         ...current,
                         ...(field === 'url' ? { content: String(value) } : {}),
@@ -556,6 +627,7 @@ const CardList: React.FC = () => {
                         ...(field === 'body' ? { api_body: String(value) } : {}),
                         ...(field === 'responsePath' ? { api_response_path: String(value) } : {}),
                         ...(field === 'retryEnabled' ? { api_retry_enabled: Boolean(value) } : {}),
+                        ...(field === 'messageTemplate' ? { api_message_template: String(value) } : {}),
                       }))}
                     />
                   </>

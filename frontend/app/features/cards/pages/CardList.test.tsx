@@ -11,6 +11,7 @@ const cardListMocks = vi.hoisted(/* cardListMockFactory 创建卡密页面共享
   createCard: vi.fn(),
   deleteCard: vi.fn(),
   updateCard: vi.fn(),
+  copyCard: vi.fn(),
   testCardAPI: vi.fn(),
 }));
 
@@ -50,6 +51,7 @@ vi.mock('../api', /* cardsApiMockFactory 提供卡密页面动作 API 替身。 
   createCard: cardListMocks.createCard,
   deleteCard: cardListMocks.deleteCard,
   updateCard: cardListMocks.updateCard,
+  copyCard: cardListMocks.copyCard,
   testCardAPI: cardListMocks.testCardAPI,
 }));
 
@@ -88,6 +90,7 @@ describe('CardList 页面组合行为', /* 当前回调验证卡密筛选、批�
     cardListMocks.createCard.mockResolvedValue({ success: true, id: 3 });
     cardListMocks.deleteCard.mockResolvedValue({ success: true });
     cardListMocks.updateCard.mockResolvedValue({ success: true });
+    cardListMocks.copyCard.mockResolvedValue({ success: true, id: 9 });
     cardListMocks.testCardAPI.mockResolvedValue({ status: 'success', status_code: 200, response_content_type: 'application/json', response_fields: ['data', 'message'], extracted_value: 'TEST-CODE' });
     vi.spyOn(window, 'alert').mockImplementation(/* alertImplementation 屏蔽卡密页面提示。 */ () => undefined);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -153,6 +156,20 @@ describe('CardList 页面组合行为', /* 当前回调验证卡密筛选、批�
     expect(screen.getByText('提取结果：TEST-CODE')).toBeTruthy();
   });
 
+  test('API 测试失败结果缺省 response_fields 时不再崩溃页面', /* 当前回调验证非 JSON 响应的空值保护。 */ async () => {
+    // 远端返回非 2xx 或非 JSON 对象时，结果可能没有 response_fields 字段；页面必须显示兜底文案而不是卸载。
+    cardListMocks.testCardAPI.mockResolvedValue({ status: 'failed', status_code: 502, response_content_type: 'text/html' });
+    render(<CardList />);
+    fireEvent.click(screen.getByText('添加新卡密'));
+    // apiTypeButton 是新增弹窗中的 API 类型按钮。
+    const apiTypeButton = screen.getByRole('button', { name: 'API 接口' });
+    fireEvent.click(apiTypeButton);
+    fireEvent.click(screen.getByRole('button', { name: '测试请求' }));
+    await waitFor(/* failedResultAssertion 等待失败结果渲染。 */ () => expect(screen.getByText('HTTP 状态：502')).toBeTruthy());
+    expect(screen.getByText('响应字段：未识别 JSON 字段')).toBeTruthy();
+    expect(screen.getByText('测试失败')).toBeTruthy();
+  });
+
   test('启停、复制和删除按钮调用对应页面动作', /* 当前回调验证卡密行级动作边界。 */ async () => {
     render(<CardList />);
     fireEvent.click(screen.getByRole('button', { name: '切换卡密 库存一 状态' }));
@@ -162,5 +179,18 @@ describe('CardList 页面组合行为', /* 当前回调验证卡密筛选、批�
     fireEvent.click(screen.getByRole('button', { name: '删除卡密 库存一' }));
     await waitFor(/* deleteAssertion 等待卡密删除请求完成。 */ () => expect(cardListMocks.deleteCard).toHaveBeenCalledWith(1));
     expect(cardListMocks.loadCards).toHaveBeenCalledTimes(2);
+  });
+
+  test('复制卡密按钮调用复制接口并刷新库存', /* 当前回调验证卡密组复制动作。 */ async () => {
+    render(<CardList />);
+    fireEvent.click(screen.getByRole('button', { name: '复制卡密 库存一' }));
+    await waitFor(/* copyAssertion 等待卡密复制请求完成。 */ () => expect(cardListMocks.copyCard).toHaveBeenCalledWith(1));
+    expect(cardListMocks.loadCards).toHaveBeenCalledTimes(1);
+
+    // 复制失败时向用户展示稳定提示，且不刷新库存。
+    cardListMocks.copyCard.mockRejectedValueOnce(new Error('复制失败'));
+    fireEvent.click(screen.getByRole('button', { name: '复制卡密 库存一' }));
+    await waitFor(/* copyErrorAssertion 等待失败提示出现。 */ () => expect(window.alert).toHaveBeenCalledWith('复制失败'));
+    expect(cardListMocks.loadCards).toHaveBeenCalledTimes(1);
   });
 });

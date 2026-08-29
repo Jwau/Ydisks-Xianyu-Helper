@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"xianyu-go/internal/application/cards"
 	"xianyu-go/internal/db"
 	"xianyu-go/internal/xianyu/cookierefresh"
 	"xianyu-go/internal/xianyu/mtop"
@@ -517,6 +518,9 @@ func (e *automationActionExecutor) sendCard(ctx context.Context, task Task, acti
 	if card.Type == "api" {
 		return e.sendAPICard(ctx, task, action, card, count)
 	}
+	if card.Type == "image" && card.ImageID > 0 {
+		return e.sendUploadedImageCard(ctx, task, card, count)
+	}
 	// sent 是已经成功发送的卡密数量。
 	sent := 0
 	// i 表示当前卡密发送序号。
@@ -556,6 +560,11 @@ func (e *automationActionExecutor) sendAPICard(ctx context.Context, task Task, a
 	if fetcher == nil {
 		return 0, errors.New("API 卡发货客户端未初始化")
 	}
+	// config 是解析后的发货配置；渲染发货文案模板需要其中的 message_template 字段。
+	config, configErr := cards.ParseAPIConfig(card.APIConfig)
+	if configErr != nil {
+		return 0, configErr
+	}
 	// sent 是已经完成 API 获取和买家消息发送的单位数量。
 	sent := 0
 	// unitIndex 表示从 1 开始的当前 API 发货单位序号。
@@ -576,8 +585,13 @@ func (e *automationActionExecutor) sendAPICard(ctx context.Context, task Task, a
 		if strings.TrimSpace(result.Content) == "" {
 			return sent, uncertainAction(errors.New("API 卡发货响应没有可发送内容"))
 		}
+		// message 是待发送文本；配置了发货文案模板时按模板渲染，{card_content} 替换为接口提取内容。
+		message := result.Content
+		if strings.TrimSpace(config.MessageTemplate) != "" {
+			message = strings.ReplaceAll(renderTemplate(config.MessageTemplate, task), "{card_content}", result.Content)
+		}
 		// sendErr 保存已取得卡密后向买家发送消息的结果；此时失败不能安全重放 API 请求。
-		if sendErr := e.sendText(ctx, task, result.Content); sendErr != nil {
+		if sendErr := e.sendText(ctx, task, message); sendErr != nil {
 			return sent, uncertainAction(sendErr)
 		}
 		sent++

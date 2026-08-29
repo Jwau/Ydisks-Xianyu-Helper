@@ -31,6 +31,10 @@ export interface AddCardForm {
   api_response_path: string;
   // api_retry_enabled 表示是否启用带幂等键的重试。
   api_retry_enabled: boolean;
+  // api_message_template 是 API 发货文案模板。
+  api_message_template: string;
+  // image_id 是已上传的本地图片引用；0 表示未选择上传。
+  image_id: number;
 }
 
 // EditCardForm 描述编辑卡密组时的表单字段和 API 扩展字段。
@@ -53,6 +57,10 @@ export type EditCardForm = Partial<Card> & {
   api_response_path?: string;
   // api_retry_enabled 表示编辑中是否启用带幂等键的重试。
   api_retry_enabled?: boolean;
+  // api_message_template 是编辑中的 API 发货文案模板。
+  api_message_template?: string;
+  // image_id 是编辑中已上传的本地图片引用；0 表示未选择上传。
+  image_id?: number;
   // api_headers_action 保存请求头模板的三态变更意图。
   api_headers_action?: 'retain' | 'replace' | 'clear';
   // api_params_action 保存请求参数模板的三态变更意图。

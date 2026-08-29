@@ -32,6 +32,47 @@ func TestFetchOrderDetailSuccessWithSpecAndStatus(t *testing.T) {
 	}
 }
 
+// TestFetchOrderDetailParsesMergedSkuInfoField: 真实平台返回把多规格放在 itemInfo.skuInfo
+// 合并字段（"规格名:规格值"）；解析器必须从这里拆分规格，否则多规格自动发货永远匹配不上。
+func TestFetchOrderDetailParsesMergedSkuInfoField(t *testing.T) {
+	// server 返回与生产抓包一致的结构：itemInfo 只有 skuInfo，没有 specName/specValue。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ret":["SUCCESS::调用成功"],"data":{"utArgs":{"orderStatus":"4"},"components":[{"render":"orderInfoVO","data":{"itemInfo":{"buyAmount":"1","skuInfo":"天数:1月","title":"虚拟商品"},"priceInfo":{"amount":{"value":"0.01"}}}}]}}`)
+	}))
+	defer server.Close()
+
+	// client 用于本次流程后续判断的client
+	client := &ClientImpl{HTTPClient: server.Client(), OrderDetailURL: server.URL + "/"}
+	// res、err 用于本次流程后续判断的res、err
+	res, err := client.FetchOrderDetail(context.Background(), consignCookies, "order-1")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if res.SpecName != "天数" || res.SpecValue != "1月" {
+		t.Fatalf("skuInfo 拆分错误 res=%+v", res)
+	}
+}
+
+// TestFetchOrderDetailSkuInfoWithoutSeparator: skuInfo 无冒号时整体作为规格值。
+func TestFetchOrderDetailSkuInfoWithoutSeparator(t *testing.T) {
+	// server 返回 skuInfo 不带冒号的历史结构。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ret":["SUCCESS::调用成功"],"data":{"components":[{"render":"orderInfoVO","data":{"itemInfo":{"buyAmount":"1","skuInfo":"红色 XL"}}}]}}`)
+	}))
+	defer server.Close()
+
+	// client 用于本次流程后续判断的client
+	client := &ClientImpl{HTTPClient: server.Client(), OrderDetailURL: server.URL + "/"}
+	// res、err 用于本次流程后续判断的res、err
+	res, err := client.FetchOrderDetail(context.Background(), consignCookies, "order-1")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if res.SpecName != "" || res.SpecValue != "红色 XL" {
+		t.Fatalf("res=%+v", res)
+	}
+}
+
 // TestFetchOrderDetailMissingBuyAmountDefaultsTo1: components 无 buyAmount 时 Quantity 默认 "1"。
 func TestFetchOrderDetailMissingBuyAmountDefaultsTo1(t *testing.T) {
 	// server 用于本次流程后续判断的server

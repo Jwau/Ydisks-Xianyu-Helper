@@ -26,6 +26,31 @@ type OrderDetailResult struct {
 
 // FetchOrderDetail 获取订单真实成交价、数量、状态和规格；token 过期时自动重签重试。
 func (c *ClientImpl) FetchOrderDetail(ctx context.Context, cookiesStr, orderID string) (*OrderDetailResult, error) {
+	// result 是共享重试循环返回的解析结果；业务链路不需要原始响应体。
+	result, err := c.fetchOrderDetailLoop(ctx, cookiesStr, orderID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// FetchOrderDetailRaw 与 FetchOrderDetail 使用相同重试语义，并额外返回最后一次调用的原始响应体。
+// 仅供运维诊断工具核对平台真实返回结构；业务链路应继续使用 FetchOrderDetail。
+func (c *ClientImpl) FetchOrderDetailRaw(ctx context.Context, cookiesStr, orderID string) (*OrderDetailResult, []byte, error) {
+	// raw 保存最后一次调用读取到的原始响应体。
+	var raw []byte
+	// result、err 是共享重试循环的解析结果和错误。
+	result, err := c.fetchOrderDetailLoop(ctx, cookiesStr, orderID, func(body []byte) {
+		raw = body
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, raw, nil
+}
+
+// fetchOrderDetailLoop 是订单详情调用的共享重试循环；capture 非空时回传每次调用的原始响应体。
+func (c *ClientImpl) fetchOrderDetailLoop(ctx context.Context, cookiesStr, orderID string, capture func([]byte)) (*OrderDetailResult, error) {
 	// currentCookies 用于本次流程后续判断的currentCookies
 	currentCookies := cookiesStr
 	if // session 用于本次流程后续判断的会话
@@ -38,10 +63,14 @@ func (c *ClientImpl) FetchOrderDetail(ctx context.Context, cookiesStr, orderID s
 	attempt := 0; attempt < 4; attempt++ {
 		// previousCookies 用于本次流程后续判断的previousCookies
 		previousCookies := currentCookies
-		// result、ret、updated、err 用于本次流程后续判断的result、ret、updated、err
-		result, ret, updated, err := c.fetchOrderDetailOnce(ctx, currentCookies, orderID)
+		// result、ret、updated、raw、err 是本次调用的解析结果、平台返回、更新 Cookie、原始响应体和错误。
+		result, ret, updated, raw, err := c.fetchOrderDetailOnce(ctx, currentCookies, orderID)
 		if err != nil {
 			return nil, err
+		}
+		// capture 非空时把本次原始响应体回传给诊断调用方。
+		if capture != nil {
+			capture(raw)
 		}
 		lastRet = ret
 		if updated != "" {
@@ -77,7 +106,7 @@ func (c *ClientImpl) FetchOrderDetail(ctx context.Context, cookiesStr, orderID s
 }
 
 // fetchOrderDetailOnce 封装fetch订单DetailOnce业务协调。
-func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, orderID string) (*OrderDetailResult, []string, string, error) {
+func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, orderID string) (*OrderDetailResult, []string, string, []byte, error) {
 	// hc 用于本次流程后续判断的hc
 	hc := c.httpClient()
 	// endpoint 用于本次流程后续判断的endpoint
@@ -98,14 +127,14 @@ func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, order
 	// req、err 用于本次流程后续判断的req、err
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"?"+buildOrderDetailQuery(t, sign), strings.NewReader("data="+url.QueryEscape(dataVal)))
 	if err != nil {
-		return nil, nil, cookiesStr, err
+		return nil, nil, cookiesStr, nil, err
 	}
 	setCommonHeaders(req, requestCookies)
 	req.Header.Set("Referer", documentURL)
 	// resp、err 用于本次流程后续判断的resp、err
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, nil, cookiesStr, fmt.Errorf("订单详情请求失败: %w", err)
+		return nil, nil, cookiesStr, nil, fmt.Errorf("订单详情请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 	// updated 用于本次流程后续判断的updated
@@ -113,7 +142,7 @@ func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, order
 	// raw、err 用于本次流程后续判断的raw、err
 	raw, err := readMTopBody(resp)
 	if err != nil {
-		return nil, nil, updated, err
+		return nil, nil, updated, raw, err
 	}
 	// decoded 用于本次流程后续判断的decoded
 	var decoded struct {
@@ -122,10 +151,10 @@ func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, order
 	}
 	if // err 用于本次流程后续判断的err
 	err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, nil, updated, fmt.Errorf("解析订单详情响应失败: %w (body=%s)", err, truncate(string(raw), 300))
+		return nil, nil, updated, raw, fmt.Errorf("解析订单详情响应失败: %w (body=%s)", err, truncate(string(raw), 300))
 	}
 	if !hasMTopSuccess(decoded.Ret) {
-		return nil, decoded.Ret, updated, nil
+		return nil, decoded.Ret, updated, raw, nil
 	}
 	// result 用于本次流程后续判断的结果
 	result := &OrderDetailResult{Quantity: "1"}
@@ -152,6 +181,20 @@ func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, order
 			}
 			result.SpecName = mtopString(itemInfo["specName"])
 			result.SpecValue = mtopString(itemInfo["specValue"])
+			// 真实返回把多规格放在合并字段 skuInfo（"规格名:规格值"）；specName/specValue
+			// 缺省时从这里拆分，确保多规格订单的自动化规格匹配有事实依据。
+			if result.SpecName == "" && result.SpecValue == "" {
+				// skuText 是平台原始合并规格文本。
+				if skuText := mtopString(itemInfo["skuInfo"]); skuText != "" {
+					// name、value、ok 是拆分出的规格名称、规格值和分隔符存在标记。
+					if name, value, ok := strings.Cut(skuText, ":"); ok {
+						result.SpecName = strings.TrimSpace(name)
+						result.SpecValue = strings.TrimSpace(value)
+					} else {
+						result.SpecValue = strings.TrimSpace(skuText)
+					}
+				}
+			}
 		}
 		if // priceInfo、ok 用于本次流程后续判断的priceInfo、ok
 		priceInfo, ok := componentData["priceInfo"].(map[string]any); ok {
@@ -161,7 +204,7 @@ func (c *ClientImpl) fetchOrderDetailOnce(ctx context.Context, cookiesStr, order
 			}
 		}
 	}
-	return result, decoded.Ret, updated, nil
+	return result, decoded.Ret, updated, raw, nil
 }
 
 // buildOrderDetailQuery 封装build订单Detail查询业务协调。

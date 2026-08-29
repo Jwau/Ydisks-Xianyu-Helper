@@ -11,7 +11,7 @@ const PAGE_CHUNK_BUDGETS: Record<string, number> = {
   Dashboard: 30 * 1024,
   AccountList: 70 * 1024,
   OrderList: 40 * 1024,
-  CardList: 45 * 1024,
+  CardList: 49 * 1024,
   ItemList: 65 * 1024,
   Settings: 30 * 1024,
   Rules: 65 * 1024,

@@ -369,18 +369,20 @@ type CardFull struct {
 	Name      string `json:"name"`
 	Type      string `json:"type"`
 	APIConfig string `json:"api_config"`
-	// APIConfigSummary 是脱敏查询路径使用的摘要；数据库层不会把完整模板交给上层。
+	// APIConfigSummary 是所有者查询路径使用的摘要；原始配置 JSON 仍不会交给上层。
 	APIConfigSummary *CardAPIConfigSummary `json:"-"`
 	TextContent      string                `json:"text_content"`
 	DataContent      string                `json:"data_content"`
 	ImageURL         string                `json:"image_url"`
-	Description      string                `json:"description"`
-	Enabled          bool                  `json:"enabled"`
-	DelaySeconds     int                   `json:"delay_seconds"`
-	IsMultiSpec      bool                  `json:"is_multi_spec"`
-	SpecName         string                `json:"spec_name"`
-	SpecValue        string                `json:"spec_value"`
-	UserID           int64                 `json:"user_id"`
+	// ImageID 是本地上传图片的引用；大于 0 表示上传模式，ImageURL 为空。
+	ImageID      int64  `json:"image_id"`
+	Description  string `json:"description"`
+	Enabled      bool   `json:"enabled"`
+	DelaySeconds int    `json:"delay_seconds"`
+	IsMultiSpec  bool   `json:"is_multi_spec"`
+	SpecName     string `json:"spec_name"`
+	SpecValue    string `json:"spec_value"`
+	UserID       int64  `json:"user_id"`
 }
 
 // ExistsOwned 判断卡密组是否属于指定用户。
@@ -402,10 +404,10 @@ func (c *Cards) Get(ctx context.Context, cardID int64) (*CardFull, error) {
 	var apiCfg, textContent, dataContent, imageURL, specName, specValue, desc sql.NullString
 	// err 用于本次流程后续判断的err
 	err := c.DB.QueryRowContext(ctx,
-		`SELECT id, name, type, api_config, text_content, data_content, image_url, description,
+		`SELECT id, name, type, api_config, text_content, data_content, image_url, image_id, description,
 		        enabled, delay_seconds, is_multi_spec, spec_name, spec_value, user_id
 		 FROM cards WHERE id=?`, cardID).Scan(
-		&cf.ID, &cf.Name, &cf.Type, &apiCfg, &textContent, &dataContent, &imageURL, &desc,
+		&cf.ID, &cf.Name, &cf.Type, &apiCfg, &textContent, &dataContent, &imageURL, &cf.ImageID, &desc,
 		&enabled, &cf.DelaySeconds, &isMultiSpec, &specName, &specValue, &cf.UserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -431,7 +433,7 @@ func (c *Cards) Get(ctx context.Context, cardID int64) (*CardFull, error) {
 func (c *Cards) AllForUser(ctx context.Context, userID int64) ([]CardFull, error) {
 	// rows、err 用于本次流程后续判断的rows、err
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, name, type, api_config, text_content, data_content, image_url, description,
+		`SELECT id, name, type, api_config, text_content, data_content, image_url, image_id, description,
 		        enabled, delay_seconds, is_multi_spec, spec_name, spec_value, user_id
 		 FROM cards WHERE user_id=? ORDER BY id DESC`, userID)
 	if err != nil {
@@ -448,7 +450,7 @@ func (c *Cards) AllForUser(ctx context.Context, userID int64) ([]CardFull, error
 		// apiCfg、textContent、dataContent、imageURL、specName、specValue、desc 用于本次流程后续判断的apiCfg、textContent、dataContent、imageURL、specName、specValue、desc
 		var apiCfg, textContent, dataContent, imageURL, specName, specValue, desc sql.NullString
 		if // err 用于本次流程后续判断的err
-		err := rows.Scan(&cf.ID, &cf.Name, &cf.Type, &apiCfg, &textContent, &dataContent, &imageURL, &desc,
+		err := rows.Scan(&cf.ID, &cf.Name, &cf.Type, &apiCfg, &textContent, &dataContent, &imageURL, &cf.ImageID, &desc,
 			&enabled, &cf.DelaySeconds, &isMultiSpec, &specName, &specValue, &cf.UserID); err != nil {
 			return nil, err
 		}
@@ -476,11 +478,11 @@ func (c *Cards) Create(ctx context.Context, cf *CardFull) (int64, error) {
 		return 0, err
 	}
 	return insertReturningID(ctx, c.DB, c.Dialect,
-		`INSERT INTO cards (name, type, api_config, text_content, data_content, image_url, description,
+		`INSERT INTO cards (name, type, api_config, text_content, data_content, image_url, image_id, description,
 		    enabled, delay_seconds, is_multi_spec, spec_name, spec_value, user_id)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		cf.Name, cf.Type, nullable(apiConfig), nullable(cf.TextContent), nullable(cf.DataContent),
-		nullable(cf.ImageURL), nullable(cf.Description), boolToInt(cf.Enabled), cf.DelaySeconds,
+		nullable(cf.ImageURL), cf.ImageID, nullable(cf.Description), boolToInt(cf.Enabled), cf.DelaySeconds,
 		boolToInt(cf.IsMultiSpec), nullable(cf.SpecName), nullable(cf.SpecValue), cf.UserID)
 }
 
@@ -493,11 +495,11 @@ func (c *Cards) Update(ctx context.Context, cf *CardFull) error {
 	}
 	// err 用于本次流程后续判断的err
 	_, err = c.DB.ExecContext(ctx,
-		`UPDATE cards SET name=?, type=?, api_config=?, text_content=?, data_content=?, image_url=?,
+		`UPDATE cards SET name=?, type=?, api_config=?, text_content=?, data_content=?, image_url=?, image_id=?,
 		    description=?, enabled=?, delay_seconds=?, is_multi_spec=?, spec_name=?, spec_value=?, updated_at=CURRENT_TIMESTAMP
 		 WHERE id=?`,
 		cf.Name, cf.Type, nullable(apiConfig), nullable(cf.TextContent), nullable(cf.DataContent),
-		nullable(cf.ImageURL), nullable(cf.Description), boolToInt(cf.Enabled), cf.DelaySeconds,
+		nullable(cf.ImageURL), cf.ImageID, nullable(cf.Description), boolToInt(cf.Enabled), cf.DelaySeconds,
 		boolToInt(cf.IsMultiSpec), nullable(cf.SpecName), nullable(cf.SpecValue), cf.ID)
 	return err
 }
@@ -518,11 +520,34 @@ func (c *Cards) decryptAPIConfig(cardType string, userID int64, value string) (s
 	return c.codec.decrypt(cardAPIConfigScope, fmt.Sprint(userID), value)
 }
 
-// Delete 删除卡券。
+// Delete 删除卡券，并连带清理其绑定的上传图片记录。
 func (c *Cards) Delete(ctx context.Context, cardID int64) error {
-	// err 用于本次流程后续判断的err
-	_, err := c.DB.ExecContext(ctx, `DELETE FROM cards WHERE id=?`, cardID)
-	return err
+	// tx、err 用于本次流程后续判断的tx、err
+	tx, err := c.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// imageID 是卡券绑定的上传图片标识；零值表示 URL 模式。
+	var imageID int64
+	// scanErr 表示读取绑定图片标识的错误。
+	if scanErr := tx.QueryRowContext(ctx, `SELECT COALESCE(image_id,0) FROM cards WHERE id=?`, cardID).Scan(&imageID); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return scanErr
+	}
+	if imageID > 0 {
+		// delImageErr 表示清理绑定上传图片的错误。
+		if _, delImageErr := tx.ExecContext(ctx, `DELETE FROM card_images WHERE id=?`, imageID); delImageErr != nil {
+			return delImageErr
+		}
+	}
+	// delCardErr 表示删除卡券记录的错误。
+	if _, delCardErr := tx.ExecContext(ctx, `DELETE FROM cards WHERE id=?`, cardID); delCardErr != nil {
+		return delCardErr
+	}
+	return tx.Commit()
 }
 
 // nullable 封装nullable业务协调。

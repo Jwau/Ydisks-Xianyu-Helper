@@ -15,11 +15,13 @@ export interface Card {
   text_content?: string;
   // 批量数据类型
   data_content?: string;
-  // API 类型配置只保存服务端返回的脱敏摘要。
+  // API 类型配置为服务端返回的所有者查询视图，含已保存请求模板回显。
   api_config?: CardAPIConfigSummary;
   // 图片类型
   /** 图片卡券地址。 */
   image_url?: string;
+  /** 本地上传图片的引用；大于 0 表示上传模式。 */
+  image_id?: number;
   // 通用配置
   /** 卡券发送延迟秒数。 */
   delay_seconds?: number;
@@ -32,7 +34,7 @@ export interface Card {
   spec_value?: string;
 }
 
-/** API 卡券查询返回的脱敏摘要；请求头和参数永远不在此模型中。 */
+/** API 卡券查询返回的所有者配置视图；请求模板回显供编辑弹窗展示和修改。 */
 export interface CardAPIConfigSummary {
   /** API 卡券请求地址。 */
   url: string;
@@ -42,6 +44,14 @@ export interface CardAPIConfigSummary {
   content_type: string;
   /** API 请求超时时间。 */
   timeout_seconds: number;
+  /** 已保存的请求头模板回显；未配置时为空对象。 */
+  headers?: Record<string, unknown>;
+  /** 已保存的查询参数模板回显；未配置时为空对象。 */
+  params?: Record<string, unknown>;
+  /** 已保存的请求正文模板回显；未配置时为空对象。 */
+  body?: Record<string, unknown>;
+  /** 发货文案模板；{card_content} 会被替换为接口提取内容。 */
+  message_template?: string;
   /** API 响应提取路径。 */
   response_path?: string;
   /** 是否启用幂等重试。 */
@@ -80,6 +90,8 @@ export interface CardAPIConfigInput {
   response_path?: string;
   /** 是否启用幂等重试。 */
   retry_enabled?: boolean;
+  /** 发货文案模板；留空直接发送接口提取内容。 */
+  message_template?: string;
 }
 
 /** API 测试请求返回的非敏感诊断结果。 */
@@ -90,12 +102,14 @@ export interface CardAPITestResult {
   status_code: number;
   /** 远端响应媒体类型。 */
   response_content_type: string;
-  /** JSON 响应顶层字段名称。 */
-  response_fields: string[];
+  /** JSON 响应顶层字段名称；响应不是 JSON 对象时可能缺省。 */
+  response_fields?: string[];
   /** 响应提取路径命中的值。 */
   extracted_value?: string;
   /** 限长响应预览。 */
   response_preview?: string;
+  /** 配置发货文案模板时按提取内容渲染出的最终发送预览。 */
+  rendered_preview?: string;
 }
 
 /** 卡券创建和更新所需的前端提交模型。 */
@@ -103,6 +117,16 @@ export type CardMutation = Omit<Partial<Card>, 'api_config'> & {
   /** API 卡券具名请求配置或历史 JSON 字符串。 */
   api_config?: CardAPIConfigInput | string;
 };
+
+/** 图片卡密上传接口的具名响应。 */
+export interface CardImageUploadResponse {
+  /** 上传是否完成。 */
+  success: boolean;
+  /** 新图片记录标识，保存图片卡密时通过 image_id 引用。 */
+  image_id: number;
+  /** 服务端清理后的文件名。 */
+  filename: string;
+}
 
 /** 卡券批量创建接口的逐行结果。 */
 /** 由当前 feature adapter 归一后的 CardBatchResult UI 模型；不直接暴露 HTTP DTO。 */

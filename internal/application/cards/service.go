@@ -48,7 +48,7 @@ type Card struct {
 	Type string
 	// APIConfig 是 API 卡券的规范化 JSON 配置；敏感请求模板由仓储加密保存。
 	APIConfig string
-	// APIConfigSummary 是普通卡券查询可见的 API 配置摘要，不含请求头、参数或密钥。
+	// APIConfigSummary 是所有者查询可见的 API 配置摘要；请求模板用于编辑回显，平台账号凭证不在此模型。
 	APIConfigSummary *APIConfigSummary
 	// TextContent 是 text 类型自动发货时发送的文本内容。
 	TextContent string
@@ -56,6 +56,8 @@ type Card struct {
 	DataContent string
 	// ImageURL 是 image 类型自动发货时发送的图片地址。
 	ImageURL string
+	// ImageID 是本地上传图片的引用；大于 0 表示上传模式，ImageURL 为空。
+	ImageID int64
 	// Description 是用户维护的卡券组说明。
 	Description string
 	// Enabled 表示自动化规则是否可以使用该卡券组。
@@ -86,6 +88,8 @@ type Draft struct {
 	DataContent string
 	// ImageURL 是 image 类型必须提供的非空图片地址。
 	ImageURL string
+	// ImageID 是 image 类型本地上传图片的引用；与 ImageURL 二选一。
+	ImageID int64
 	// Description 是用户维护的卡券组说明。
 	Description string
 	// Enabled 表示保存后是否允许自动化规则使用该卡券组。
@@ -244,6 +248,41 @@ func (s *Service) AppendData(ctx context.Context, userID, cardID int64, content 
 	return s.repository.AppendData(ctx, cardID, content)
 }
 
+// Copy 校验 cardID 归属后复制卡密组为一个新的卡密组，返回新卡密组标识。
+// 名称追加“-副本”后缀；类型、内容、API 配置（含敏感模板）、延时和多规格设置原样保留。
+// 新卡密组保持源组的启用状态，但既有自动化规则按卡密组标识引用，不会自动绑定副本。
+func (s *Service) Copy(ctx context.Context, userID, cardID int64) (int64, error) {
+	// err 表示用户身份或应用仓储未满足执行条件的错误。
+	if err := s.validateUser(userID); err != nil {
+		return 0, err
+	}
+	// existing 是复制源卡密组的完整记录；API 敏感模板只在应用内部短暂流转，不经 HTTP 响应回传。
+	existing, err := s.ownedCardFull(ctx, userID, cardID)
+	if err != nil {
+		return 0, err
+	}
+	// draft 是基于源卡密组生成的复制草稿，复用 Create 的同一条校验路径。
+	draft := Draft{
+		Name: copiedCardName(existing.Name), Type: existing.Type, APIConfig: existing.APIConfig,
+		TextContent: existing.TextContent, DataContent: existing.DataContent, ImageURL: existing.ImageURL, ImageID: existing.ImageID,
+		Description: existing.Description, Enabled: existing.Enabled, DelaySeconds: existing.DelaySeconds,
+		IsMultiSpec: existing.IsMultiSpec, SpecName: existing.SpecName, SpecValue: existing.SpecValue,
+	}
+	return s.Create(ctx, userID, draft)
+}
+
+// copiedCardName 生成副本卡密组名称；源名称已带副本后缀时继续叠加，便于区分多代副本。
+func copiedCardName(sourceName string) string {
+	// suffix 是副本名称使用的固定中文后缀。
+	const suffix = "-副本"
+	// trimmed 保存去除空白后的源名称，空名称回退为固定基础名称。
+	trimmed := strings.TrimSpace(sourceName)
+	if trimmed == "" {
+		return "卡密组" + suffix
+	}
+	return trimmed + suffix
+}
+
 // validateUser 检查应用服务及用户身份是否具备执行卡券用例的条件。
 func (s *Service) validateUser(userID int64) error {
 	if s == nil || s.repository == nil {
@@ -310,10 +349,17 @@ func validateDraft(draft Draft) error {
 			return &ValidationError{Message: "数据卡密内容不能为空"}
 		}
 	case "image":
+		// 图片卡支持链接与本地上传两种来源；同时设置或都为空都视为输入矛盾。
+		if draft.ImageID > 0 && strings.TrimSpace(draft.ImageURL) != "" {
+			return &ValidationError{Message: "图片卡密只能选择图片链接或本地上传其中一种"}
+		}
+		if draft.ImageID > 0 {
+			break
+		}
 		// imageURL、err 分别保存规范化后的远程图片地址和 URL 解析错误。
 		imageURL, err := url.Parse(strings.TrimSpace(draft.ImageURL))
 		if strings.TrimSpace(draft.ImageURL) == "" {
-			return &ValidationError{Message: "图片卡密 URL 不能为空"}
+			return &ValidationError{Message: "图片卡密必须提供图片链接或本地上传图片"}
 		}
 		if err != nil || imageURL.Hostname() == "" || imageURL.User != nil || (imageURL.Scheme != "http" && imageURL.Scheme != "https") {
 			return &ValidationError{Message: "图片卡密 URL 必须是 HTTP(S) 地址"}
@@ -330,7 +376,7 @@ func validateDraft(draft Draft) error {
 func cardFromDraft(cardID, userID int64, draft Draft) Card {
 	return Card{
 		ID: cardID, Name: draft.Name, Type: draft.Type, APIConfig: draft.APIConfig,
-		TextContent: draft.TextContent, DataContent: draft.DataContent, ImageURL: draft.ImageURL,
+		TextContent: draft.TextContent, DataContent: draft.DataContent, ImageURL: draft.ImageURL, ImageID: draft.ImageID,
 		Description: draft.Description, Enabled: draft.Enabled, DelaySeconds: draft.DelaySeconds,
 		IsMultiSpec: draft.IsMultiSpec, SpecName: draft.SpecName, SpecValue: draft.SpecValue, UserID: userID,
 	}

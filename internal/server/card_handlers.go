@@ -27,6 +27,8 @@ type cardMutationRequest struct {
 	DataContent string `json:"data_content"`
 	// ImageURL 是 image 类型自动发货时发送的图片地址。
 	ImageURL string `json:"image_url"`
+	// ImageID 是 image 类型本地上传图片的引用；与 ImageURL 二选一。
+	ImageID int64 `json:"image_id"`
 	// Description 是用户维护的卡券组说明。
 	Description string `json:"description"`
 	// Enabled 表示保存后是否允许自动化规则使用该卡券组。
@@ -67,6 +69,8 @@ type cardAPITestResponse struct {
 	ExtractedValue string `json:"extracted_value,omitempty"`
 	// ResponsePreview 是限长响应预览。
 	ResponsePreview string `json:"response_preview,omitempty"`
+	// RenderedPreview 是配置发货文案模板时按提取内容渲染出的最终发送预览。
+	RenderedPreview string `json:"rendered_preview,omitempty"`
 }
 
 // mountCardsReal 挂载卡券 CRUD、批量创建和库存追加路由；发货规则由 automation_rules 负责。
@@ -76,6 +80,9 @@ func (s *Server) mountCardsReal(r chi.Router) {
 	r.Post("/cards/test-api", s.testCardAPI)
 	r.Post("/cards/batch", s.batchCreateCards)
 	r.Post("/cards/{card_id}/append-data", s.appendCardData)
+	r.Post("/cards/images", s.uploadCardImage)
+	r.Get("/cards/images/{image_id}", s.getCardImage)
+	r.Post("/cards/{card_id}/copy", s.copyCard)
 	r.Get("/cards/{card_id}/details", s.getCard)
 	r.Get("/cards/{card_id}", s.getCard)
 	r.Put("/cards/{card_id}", s.updateCard)
@@ -107,7 +114,7 @@ func (s *Server) testCardAPI(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, cardAPITestResponse{Status: result.Status, StatusCode: result.StatusCode, ResponseContentType: result.ResponseContentType, ResponseFields: result.ResponseFields, ExtractedValue: result.ExtractedValue, ResponsePreview: result.ResponsePreview})
+	writeJSON(w, http.StatusOK, cardAPITestResponse{Status: result.Status, StatusCode: result.StatusCode, ResponseContentType: result.ResponseContentType, ResponseFields: result.ResponseFields, ExtractedValue: result.ExtractedValue, ResponsePreview: result.ResponsePreview, RenderedPreview: result.RenderedPreview})
 }
 
 // listCards 将认证用户交给应用服务，并把卡券应用模型转换为 HTTP DTO。
@@ -233,6 +240,37 @@ func (s *Server) deleteCard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, operationResponse{Success: true})
 }
 
+// copyCard 在归属校验后复制卡密组为一个新的卡密组，并返回新卡密组标识。
+// 复制在服务端完成：API 敏感模板不出现在请求或响应中，副本名称由应用服务追加“-副本”后缀。
+func (s *Server) copyCard(w http.ResponseWriter, r *http.Request) {
+	// cardID、parseErr 保存路径中的卡券标识及数字解析错误。
+	cardID, parseErr := strconv.ParseInt(chi.URLParam(r, "card_id"), 10, 64)
+	if parseErr != nil {
+		writeErr(w, http.StatusBadRequest, "无效卡券ID")
+		return
+	}
+	// session 是认证中间件注入的当前用户会话。
+	session := auth.SessionFromContext(r.Context())
+	// newID、err 保存应用服务复制出的新卡密组标识及业务或持久化错误。
+	newID, err := s.cardsApplication().Copy(r.Context(), session.UserID, cardID)
+	if err != nil {
+		// validationError 用于识别可直接返回客户端的稳定业务校验提示。
+		var validationError *cardsapp.ValidationError
+		switch {
+		case errors.As(err, &validationError):
+			writeErr(w, http.StatusBadRequest, validationError.Error())
+		case errors.Is(err, cardsapp.ErrNotFound) || errors.Is(err, cardsapp.ErrInvalidCardID):
+			writeErr(w, http.StatusNotFound, "卡券不存在")
+		case errors.Is(err, cardsapp.ErrForbidden):
+			writeErr(w, http.StatusForbidden, "无权操作该卡密组")
+		default:
+			writeErr(w, http.StatusInternalServerError, "复制失败")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, mutationIDResponse{Success: true, ID: newID})
+}
+
 // decodeCardDraft 把具名 HTTP 请求 DTO 转换为应用输入；业务校验由应用服务统一负责。
 func decodeCardDraft(r *http.Request) (cardsapp.Draft, error) {
 	// request 是当前待解码的卡券创建或更新请求。
@@ -248,7 +286,7 @@ func decodeCardDraft(r *http.Request) (cardsapp.Draft, error) {
 	}
 	return cardsapp.Draft{
 		Name: request.Name, Type: request.Type, APIConfig: apiConfig,
-		TextContent: request.TextContent, DataContent: request.DataContent, ImageURL: request.ImageURL,
+		TextContent: request.TextContent, DataContent: request.DataContent, ImageURL: request.ImageURL, ImageID: request.ImageID,
 		Description: request.Description, Enabled: request.Enabled, DelaySeconds: request.DelaySeconds,
 		IsMultiSpec: request.IsMultiSpec, SpecName: request.SpecName, SpecValue: request.SpecValue,
 	}, nil

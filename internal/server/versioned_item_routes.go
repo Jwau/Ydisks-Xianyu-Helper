@@ -18,6 +18,7 @@ func (s *Server) mountVersionedItems(r chi.Router) {
 		r.Post("/api/v1/items/publish", s.publishItem)
 		r.Put("/api/v1/items/{cookie_id}/{item_id}", s.updateItem)
 		r.Delete("/api/v1/items/{cookie_id}/{item_id}", s.deleteItem)
+		r.Post("/api/v1/items/migrate", s.migrateItems)
 		r.Put("/api/v1/items/{cookie_id}/{item_id}/multi-spec", s.setItemMultiSpec)
 		r.Put("/api/v1/items/{cookie_id}/{item_id}/multi-quantity-delivery", s.setItemMultiQuantity)
 	})

@@ -23,10 +23,50 @@ func TestParseAPIConfigCompatibilityAndRetryGuard(t *testing.T) {
 	if _, retryErr := normalizeAPIConfig(`{"url":"https://example.com","retry_enabled":true,"params":{"order_id":"{order_id}"}}`, ""); retryErr == nil {
 		t.Fatal("启用重试但没有幂等键时必须拒绝保存")
 	}
-	// summary 保存脱敏摘要，确认模板秘密不会进入查询模型。
+	// summary 保存所有者查询摘要，确认请求模板随配置回显供编辑使用。
 	summary := SummarizeAPIConfig(config)
 	if !summary.Ready || !summary.HeadersConfigured || !summary.ParamsConfigured || summary.ValidationError != "" {
 		t.Fatalf("API 摘要错误: %+v", summary)
+	}
+	// 回显的模板必须包含归一后的请求头和参数值，供编辑弹窗展示。
+	if summary.Headers["Authorization"] != "Bearer secret" || summary.Params["order"] != "{order_id}" {
+		t.Fatalf("API 摘要模板回显错误: %+v", summary)
+	}
+}
+
+// TestMessageTemplateRoundTrip 验证发货文案模板在归一化、执行模型和摘要中原样保留。
+func TestMessageTemplateRoundTrip(t *testing.T) {
+	// normalized 是带发货文案模板的归一化配置。
+	normalized, err := normalizeAPIConfig(`{"url":"https://example.com","message_template":"兑换码：{card_content}"}`, "")
+	if err != nil || normalized == "" {
+		t.Fatalf("归一化失败 config=%q err=%v", normalized, err)
+	}
+	// document 是解析后的执行模型。
+	document, parseErr := ParseAPIConfig(normalized)
+	if parseErr != nil || document.MessageTemplate != "兑换码：{card_content}" {
+		t.Fatalf("执行模型模板错误 document=%+v err=%v", document, parseErr)
+	}
+	// summary 是所有者查询摘要。
+	summary := SummarizeAPIConfig(normalized)
+	if summary.MessageTemplate != "兑换码：{card_content}" {
+		t.Fatalf("摘要模板错误: %+v", summary)
+	}
+}
+
+// TestSummarizeAPIConfigAlwaysReturnsTemplateObjects 验证无效配置和未配置模板时摘要仍返回空对象而不是 null。
+func TestSummarizeAPIConfigAlwaysReturnsTemplateObjects(t *testing.T) {
+	// invalid 保存无法通过校验的 API 配置。
+	invalid := SummarizeAPIConfig(`{"url":"not-a-url"}`)
+	if invalid.Ready || invalid.ValidationError == "" {
+		t.Fatalf("无效配置必须带校验错误: %+v", invalid)
+	}
+	if invalid.Headers == nil || invalid.Params == nil || invalid.Body == nil {
+		t.Fatalf("无效配置的模板字段必须是空对象而不是 null: %+v", invalid)
+	}
+	// unparsable 保存无法解析的 API 配置文本。
+	unparsable := SummarizeAPIConfig("not-json")
+	if unparsable.Headers == nil || unparsable.Params == nil || unparsable.Body == nil {
+		t.Fatalf("解析失败的模板字段必须是空对象而不是 null: %+v", unparsable)
 	}
 }
 

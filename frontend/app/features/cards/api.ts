@@ -5,6 +5,7 @@ CardBatchResponse,
 	CardMutation,
 	CardAPITestResult,
 	CardAPIConfigInput,
+	CardImageUploadResponse,
 MutationIDResponse,OperationResponse
 } from './models';
 import { type RequestControlOptions } from '../../../shared/http/client';
@@ -111,7 +112,23 @@ export const batchCreateCards = async (file: File, options?: RequestControlOptio
 
 // 往 data 类型卡密组批量追加卡密号
 export const appendCardData = async (cardId: string | number, content: string, options?: RequestControlOptions): Promise<CardAppendResponse> => {
-  return runContractRequest(/* signal 控制卡券追加数据请求的取消和超时。 */ signal => contractClient.POST('/api/v1/cards/{card_id}/append-data', { params: { path: { card_id: String(cardId) } }, body: { content }, signal }), options);
+  return runContractRequest(/* signal 控制卡密追加数据请求的取消和超时。 */ signal => contractClient.POST('/api/v1/cards/{card_id}/append-data', { params: { path: { card_id: String(cardId) } }, body: { content }, signal }), options);
+};
+
+// uploadCardImage 上传本地图片文件并返回图片记录标识，供图片卡密保存时引用。
+export const uploadCardImage = async (file: File, options?: RequestControlOptions): Promise<CardImageUploadResponse> => {
+  // body 是 multipart 上传载荷，与批量导入保持同一构建方式。
+  const body = new FormData();
+  body.append('file', file);
+  return runContractRequest(/* signal 控制图片上传请求的取消和超时。 */ signal => contractClient.POST('/api/v1/cards/images', { body: contractMultipartBody(body), signal }), options);
+};
+
+// cardImageSrc 返回本地上传图片的预览地址；仅供同源会话内的 img 标签使用。
+export const cardImageSrc = (imageId: number): string => `/api/v1/cards/images/${imageId}`;
+
+// copyCard 复制卡密组为一个新的卡密组，返回新卡密组标识；复制在服务端完成，敏感模板不经前端回传。
+export const copyCard = async (cardId: string | number, options?: RequestControlOptions): Promise<MutationIDResponse> => {
+  return runContractRequest(/* signal 控制卡密复制请求的取消和超时。 */ signal => contractClient.POST('/api/v1/cards/{card_id}/copy', { params: { path: { card_id: String(cardId) } }, signal }), options);
 };
 
 // testCardAPI 发送一次临时 API 配置测试请求，不保存卡密配置。

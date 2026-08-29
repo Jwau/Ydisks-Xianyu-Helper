@@ -39,6 +39,50 @@ func TestAPICardTesterReturnsResponseDiagnostics(t *testing.T) {
 	}
 }
 
+// TestAPICardTesterRendersDeliveryMessagePreview 验证测试结果按发货同源规则提取内容并渲染发货文案模板。
+func TestAPICardTesterRendersDeliveryMessagePreview(t *testing.T) {
+	// server 是返回嵌套 code 字段的本地 API 测试端点。
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"data":{"code":"X9"}}`))
+	}))
+	defer server.Close()
+	// client 是不访问数据库的临时 API 测试适配器。
+	client := &apiDeliveryClient{}
+	// result、err 保存测试请求返回的诊断和错误。
+	result, err := client.Test(context.Background(), cardsapp.APIRequestTestInput{Config: fmt.Sprintf(`{"url":%q,"method":"GET","timeout_seconds":10,"response_path":"data.code","message_template":"兑换码：{card_content}，订单{order_id}"}`, server.URL)})
+	if err != nil {
+		t.Fatalf("API 测试请求失败: %v", err)
+	}
+	// 无提取路径时与发货一致：对象优先取 data 字段。
+	if result.ExtractedValue != "X9" {
+		t.Fatalf("默认提取错误: %+v", result)
+	}
+	if result.RenderedPreview != "兑换码：X9，订单test-order" {
+		t.Fatalf("发货文案渲染错误: %+v", result)
+	}
+}
+
+// TestAPICardTesterKeepsResponseFieldsArrayOnNonObjectJSON 验证 JSON 数组响应的测试结果仍返回空字段数组而不是 null。
+func TestAPICardTesterKeepsResponseFieldsArrayOnNonObjectJSON(t *testing.T) {
+	// server 是返回 JSON 数组的本地 API 测试端点。
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`["CARD-001","CARD-002"]`))
+	}))
+	defer server.Close()
+	// client 是不访问数据库的临时 API 测试适配器。
+	client := &apiDeliveryClient{}
+	// result、err 保存测试请求返回的诊断和错误。
+	result, err := client.Test(context.Background(), cardsapp.APIRequestTestInput{Config: fmt.Sprintf(`{"url":%q,"method":"GET","timeout_seconds":10}`, server.URL)})
+	if err != nil {
+		t.Fatalf("API 测试请求失败: %v", err)
+	}
+	if result.ResponseFields == nil {
+		t.Fatal("JSON 数组响应的 response_fields 必须是空数组而不是 null")
+	}
+}
+
 // TestAPICardTesterPreservesRemoteFailureDiagnostics 验证远端非 2xx 仍作为完成结果返回状态码和限长预览。
 func TestAPICardTesterPreservesRemoteFailureDiagnostics(t *testing.T) {
 	// server 是返回明确失败状态的本地 API 端点。
@@ -56,6 +100,10 @@ func TestAPICardTesterPreservesRemoteFailureDiagnostics(t *testing.T) {
 	}
 	if result.Status != "failed" || result.StatusCode != http.StatusBadGateway || result.ResponsePreview != "remote failure" {
 		t.Fatalf("远端失败诊断错误: %+v", result)
+	}
+	// 失败结果也必须携带空字段数组，保证前端不会读到 null。
+	if result.ResponseFields == nil {
+		t.Fatal("失败结果的 response_fields 必须是空数组而不是 null")
 	}
 }
 

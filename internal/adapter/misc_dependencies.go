@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	cardsapp "xianyu-go/internal/application/cards"
+	itemsapp "xianyu-go/internal/application/items"
 	notificationsapp "xianyu-go/internal/application/notifications"
 	"xianyu-go/internal/db"
 )
@@ -54,6 +55,16 @@ func (d *MiscDependencies) NewCardsRepository() *CardsRepository {
 		return nil
 	}
 	return NewCardsRepository(d.store)
+}
+
+// NewItemMigrationRepository 创建商品迁移仓储，供商品迁移应用服务使用。
+func (d *MiscDependencies) NewItemMigrationRepository() itemsapp.ItemMigrationRepository {
+	return &itemMigrationRepository{store: d.store}
+}
+
+// NewCardImageService 创建图片卡密本地上传图片服务，供组合根投影给 HTTP transport。
+func (d *MiscDependencies) NewCardImageService() *CardImageService {
+	return &CardImageService{store: d.store}
 }
 
 // NewAPICardTester 创建卡券 API 测试适配器，供组合根投影给 HTTP transport。

@@ -8,6 +8,9 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS backend
+# GOPROXY 是 Go 模块代理地址；默认使用 goproxy.cn，CI 可通过 --build-arg 覆盖为官方代理。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 ARG TARGETOS
 ARG TARGETARCH
 ARG APP_VERSION=dev
@@ -27,6 +30,8 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath \
 # 本地 Docker 构建没有主机 runtime 缓存时使用此工具下载一次；CI 会优先复制缓存，
 # 不会走这个兜底路径。
 FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS browser-install-builder
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -84,6 +89,9 @@ COPY --from=playwright-runtime /ms-playwright-go /ms-playwright-go
 COPY --from=playwright-runtime /ms-playwright /ms-playwright
 # 浏览器文件本身不包含 Linux 动态链接库。使用与 runtime 同捆的 Playwright
 # driver 只安装 Chromium 所需系统依赖，并在同一镜像层清理 apt/npm/临时缓存。
+# APT_MIRROR 是可选的 apt 镜像源；非空时替换 Debian 官方源（境内构建提速）。
+ARG APT_MIRROR=""
+RUN set -eux; if [ -n "$APT_MIRROR" ]; then sed -i "s|http://deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; fi
 RUN set -eux; \
     node /ms-playwright-go/package/cli.js install-deps chromium; \
     apt-get update; \

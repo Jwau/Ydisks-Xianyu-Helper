@@ -9,12 +9,14 @@ const cardActionMocks = vi.hoisted(/* cardActionMockFactory 创建卡密动作 A
   createCard: vi.fn(),
   deleteCard: vi.fn(),
   updateCard: vi.fn(),
+  copyCard: vi.fn(),
 }));
 
 vi.mock('./api', /* cardApiMockFactory 提供卡密动作 API 替身。 */ () => ({
   createCard: cardActionMocks.createCard,
   deleteCard: cardActionMocks.deleteCard,
   updateCard: cardActionMocks.updateCard,
+  copyCard: cardActionMocks.copyCard,
 }));
 
 // cardFixture 表示卡密动作 Hook 使用的 data 类型卡密组。
@@ -55,6 +57,7 @@ describe('useCardActions 卡密动作协调器', /* 当前回调验证卡密筛�
     cardActionMocks.updateCard.mockResolvedValue({ success: true });
     vi.spyOn(window, 'alert').mockImplementation(/* alertImplementation 屏蔽卡密动作提示。 */ () => undefined);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    cardActionMocks.copyCard.mockResolvedValue({ success: true, id: 9 });
   });
 
   afterEach(/* 当前回调恢复卡密测试浏览器替身。 */ () => {
@@ -125,6 +128,65 @@ describe('useCardActions 卡密动作协调器', /* 当前回调验证卡密筛�
     expect(cardActionMocks.updateCard).toHaveBeenCalledWith(4, expect.objectContaining({
       api_config: expect.objectContaining({ headers: {}, params: {} }),
     }));
+  });
+
+  test('编辑 API 卡回显已保存模板并默认按表单替换', /* 当前回调验证请求模板回显和轮转保存语义。 */ async () => {
+    // apiCard 保存带请求模板回显的 API 卡密组。
+    const apiCard: Card = {
+      ...cardFixture,
+      id: 5,
+      name: '回显卡',
+      type: 'api',
+      api_config: {
+        url: 'https://example.test/echo',
+        method: 'POST',
+        timeout_seconds: 15,
+        content_type: 'application/json',
+        headers: { Authorization: 'Bearer saved-token' },
+        params: { order_id: '{order_id}' },
+        body: { order_id: '{order_id}' },
+        message_template: '兑换码：【{card_content}】',
+        headers_configured: true,
+        params_configured: true,
+        retry_enabled: false,
+        ready: true,
+      },
+    };
+    // loadCards 是 API 卡编辑完成后的刷新替身。
+    const loadCards = vi.fn().mockResolvedValue(undefined);
+    // hook 是注入 API 卡回显数据的动作 Hook。
+    const hook = renderHook(/* hookFactory 渲染注入 API 卡的动作 Hook。 */ () => useCardActions({ cards: [apiCard], loadCards }));
+    act(/* editAction 打开 API 卡编辑表单。 */ () => hook.result.current.handleEdit(apiCard));
+    // 已保存模板必须出现在编辑草稿中，处理方式默认为按表单替换。
+    expect(hook.result.current.editForm.api_headers).toBe(JSON.stringify({ Authorization: 'Bearer saved-token' }));
+    expect(hook.result.current.editForm.api_params).toBe(JSON.stringify({ order_id: '{order_id}' }));
+    expect(hook.result.current.editForm.api_body).toBe(JSON.stringify({ order_id: '{order_id}' }));
+    expect(hook.result.current.editForm.api_message_template).toBe('兑换码：【{card_content}】');
+    expect(hook.result.current.editForm.api_headers_action).toBe('replace');
+    expect(hook.result.current.editForm.api_params_action).toBe('replace');
+    await act(/* saveAction 不修改模板直接保存。 */ async () => hook.result.current.handleSaveEdit());
+    // 动作 Hook 提交的是模板 JSON 文本；对象化转换由真实 api.ts 的载荷映射负责。
+    expect(cardActionMocks.updateCard).toHaveBeenCalledWith(5, expect.objectContaining({
+      api_config: expect.objectContaining({
+        headers: JSON.stringify({ Authorization: 'Bearer saved-token' }),
+        params: JSON.stringify({ order_id: '{order_id}' }),
+        body: JSON.stringify({ order_id: '{order_id}' }),
+        message_template: '兑换码：【{card_content}】',
+      }),
+    }));
+  });
+
+  test('复制卡密组成功刷新库存，失败时提示且不刷新', /* 当前回调验证卡密组复制动作边界。 */ async () => {
+    // actionContext 保存卡密复制 Hook 和库存刷新替身。
+    const { hook, loadCards } = createCardHook();
+    await act(/* copyAction 复制指定卡密组。 */ async () => hook.result.current.handleCopyCard(1));
+    expect(cardActionMocks.copyCard).toHaveBeenCalledWith(1);
+    expect(loadCards).toHaveBeenCalledTimes(1);
+
+    cardActionMocks.copyCard.mockRejectedValueOnce(new Error('复制失败'));
+    await act(/* copyErrorAction 执行失败的复制请求。 */ async () => hook.result.current.handleCopyCard(2));
+    expect(window.alert).toHaveBeenCalledWith('复制失败');
+    expect(loadCards).toHaveBeenCalledTimes(1);
   });
 
   test('删除取消、删除失败和状态切换失败均不制造虚假成功', /* 当前回调验证卡密删除和启停异常分支。 */ async () => {

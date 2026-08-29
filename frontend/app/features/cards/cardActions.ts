@@ -1,6 +1,6 @@
 import { useCallback,useMemo,useState,type Dispatch,type SetStateAction } from 'react';
 import type { Card,CardMutation } from './api';
-import { createCard,deleteCard,updateCard } from './api';
+import { copyCard,createCard,deleteCard,updateCard } from './api';
 import { filterCards } from './batchState';
 import type { AddCardForm,EditCardForm } from './types';
 
@@ -20,6 +20,8 @@ export const emptyAddForm = (): AddCardForm => ({
   api_body: '',
   api_response_path: '',
   api_retry_enabled: false,
+  api_message_template: '',
+  image_id: 0,
 });
 
 // CardActionsOptions 描述卡密动作协调器依赖的库存状态和刷新操作。
@@ -68,6 +70,8 @@ export interface CardActionsState {
   handleSaveEdit: () => Promise<void>;
   // handleDelete 删除指定卡密组并刷新库存。
   handleDelete: (id: string | number) => Promise<void>;
+  // handleCopyCard 复制指定卡密组为新的卡密组并刷新库存。
+  handleCopyCard: (id: string | number) => Promise<void>;
   // handleAddCard 创建新的卡密组并刷新库存。
   handleAddCard: () => Promise<void>;
   // toggleCardStatus 切换指定卡密组的启用状态。
@@ -80,6 +84,16 @@ export interface CardActionsState {
 
 // cardErrorMessage 将未知异常转换为稳定的卡密操作提示。
 const cardErrorMessage = (error: unknown, fallback: string): string => error instanceof Error ? error.message : fallback;
+
+// templateText 将服务端回读的请求模板对象转换为表单 JSON 文本；
+// 空对象或缺省返回空字符串，便于键值编辑器和正文输入框展示干净的初始状态。
+const templateText = (value: Record<string, unknown> | undefined): string =>
+  value && Object.keys(value).length > 0 ? JSON.stringify(value) : '';
+
+// apiTemplateSubmit 将模板文本与三态意图转换为提交值；
+// clear 交给服务端清除，replace 空文本显式提交空对象，其余空文本交由服务端保留旧值。
+const apiTemplateSubmit = (text: string | undefined, action: string | undefined) =>
+  action === 'clear' ? undefined : action === 'replace' && !text?.trim() ? {} : text?.trim() || undefined;
 
 // useCardActions 集中管理卡密新增、编辑、删除、筛选和展示动作。
 export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardActionsState => {
@@ -115,17 +129,21 @@ export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardAc
       api_url: card.api_config?.url || '',
       api_method: card.api_config?.method || 'GET',
       api_timeout: card.api_config?.timeout_seconds || 10,
-      api_headers: '',
-      api_params: '',
+      // 请求模板回显已保存的请求头、参数和正文，编辑所见即所存。
+      api_headers: templateText(card.api_config?.headers),
+      api_params: templateText(card.api_config?.params),
       api_content_type: card.api_config?.content_type || 'application/json',
-      api_body: '',
+      api_body: templateText(card.api_config?.body),
       api_response_path: card.api_config?.response_path || '',
       api_retry_enabled: card.api_config?.retry_enabled || false,
-      api_headers_action: 'retain',
-      api_params_action: 'retain',
+      api_message_template: card.api_config?.message_template || '',
+      // 已回显具体模板，默认按表单当前内容替换保存；用户可显式切换保留或清除。
+      api_headers_action: 'replace',
+      api_params_action: 'replace',
       text_content: card.text_content || '',
       data_content: card.data_content || '',
       image_url: card.image_url || '',
+      image_id: card.image_id || 0,
       delay_seconds: card.delay_seconds || 0,
       description: card.description || '',
       enabled: card.enabled,
@@ -158,21 +176,29 @@ export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardAc
           url: editForm.api_url?.trim() || '',
           method: editForm.api_method || 'GET',
           timeout_seconds: editForm.api_timeout || 10,
-          headers: editForm.api_headers_action === 'clear' ? undefined : editForm.api_headers_action === 'replace' && !editForm.api_headers?.trim() ? {} : editForm.api_headers?.trim() || undefined,
-          params: editForm.api_params_action === 'clear' ? undefined : editForm.api_params_action === 'replace' && !editForm.api_params?.trim() ? {} : editForm.api_params?.trim() || undefined,
+          headers: apiTemplateSubmit(editForm.api_headers, editForm.api_headers_action),
+          params: apiTemplateSubmit(editForm.api_params, editForm.api_params_action),
           content_type: editForm.api_content_type || 'application/json',
           body: editForm.api_body?.trim() || undefined,
           headers_action: editForm.api_headers_action || 'retain',
           params_action: editForm.api_params_action || 'retain',
           response_path: editForm.api_response_path?.trim() || undefined,
           retry_enabled: editForm.api_retry_enabled || false,
+          message_template: editForm.api_message_template?.trim() || undefined,
         };
       } else if (editForm.type === 'text') {
         updateData.text_content = editForm.text_content?.trim() || '';
       } else if (editForm.type === 'data') {
         updateData.data_content = editForm.data_content?.trim() || '';
       } else if (editForm.type === 'image') {
-        updateData.image_url = editForm.image_url?.trim() || '';
+        // 上传模式携带 image_id 并清空 URL；链接模式反向处理，保证服务端二选一校验通过。
+        if (editForm.image_id) {
+          updateData.image_id = editForm.image_id;
+          updateData.image_url = '';
+        } else {
+          updateData.image_id = 0;
+          updateData.image_url = editForm.image_url?.trim() || '';
+        }
       }
       await updateCard(selectedCard.id, updateData);
       setShowEditModal(false);
@@ -195,13 +221,25 @@ export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardAc
     }
   }, [loadCards]);
 
+  // handleCopyCard 复制指定卡密组为新的卡密组并刷新库存；复制内容与绑定关系由服务端决定。
+  const handleCopyCard = useCallback(/* copyCardAction 复制卡密组。 */ async (id: string | number) => {
+    try {
+      await copyCard(id);
+      await loadCards();
+    } catch (/* error 表示卡密复制请求异常。 */ error: unknown) {
+      console.error('复制卡密失败:', error);
+      alert(cardErrorMessage(error, '复制失败，请重试'));
+    }
+  }, [loadCards]);
+
   // handleAddCard 校验新增表单、创建卡密组并刷新库存。
   const handleAddCard = useCallback(/* addAction 创建新的卡密组。 */ async () => {
     if (!addForm.name.trim()) {
       alert('请输入卡密名称');
       return;
     }
-    if (!addForm.content.trim()) {
+    // 图片卡支持链接与本地上传两种来源；上传模式不要求填写链接。
+    if (!addForm.content.trim() && !(addForm.type === 'image' && addForm.image_id)) {
       alert(addForm.type === 'api' ? '请输入 API 地址' : '请输入卡密内容');
       return;
     }
@@ -216,7 +254,15 @@ export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardAc
       };
       if (addForm.type === 'text') payload.text_content = addForm.content.trim();
       if (addForm.type === 'data') payload.data_content = addForm.content.trim();
-      if (addForm.type === 'image') payload.image_url = addForm.content.trim();
+      if (addForm.type === 'image') {
+        // 上传模式携带 image_id 并清空 URL，保证服务端二选一校验通过。
+        if (addForm.image_id) {
+          payload.image_id = addForm.image_id;
+          payload.image_url = '';
+        } else {
+          payload.image_url = addForm.content.trim();
+        }
+      }
       if (addForm.type === 'api') {
         payload.api_config = {
           url: addForm.content.trim(),
@@ -307,6 +353,7 @@ export const useCardActions = ({ cards, loadCards }: CardActionsOptions): CardAc
     handleEdit,
     handleSaveEdit,
     handleDelete,
+    handleCopyCard,
     handleAddCard,
     toggleCardStatus,
     copyCardID,
